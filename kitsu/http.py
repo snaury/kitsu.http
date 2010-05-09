@@ -121,7 +121,7 @@ class Request(object):
     def _parseCommand(self, line):
         parts = line.split(None, 2)
         if len(parts) != 3:
-            raise RequestError("request should be in 'METHOD path HTTP/n.n' format")
+            raise RequestError("request must be in 'METHOD path HTTP/n.n' format")
         method, path, version = parts
         if not version.startswith('HTTP/'):
             raise RequestError("protocol must be HTTP")
@@ -181,7 +181,7 @@ class Response(object):
     def _parseStatus(self, line):
         parts = line.split(None, 2)
         if len(parts) not in (2, 3):
-            raise ResponseError("response should be in 'HTTP/n.n status message' format")
+            raise ResponseError("response must be in 'HTTP/n.n status message' format")
         version = parts[0]
         code = parts[1]
         phrase = len(parts) >= 3 and parts[2] or ""
@@ -211,59 +211,167 @@ class Response(object):
                 self._parserState = 'DONE'
         return line and True or False
 
-class HTTPRequestParser(LineReceiver):
+class Parser(object):
+    """
+    Parser
+    """
+    
+    done = False
+    cache = ''
+    
+    def clear(self):
+        data, self.cache = self.cache, ''
+        return data
+    
+    def prepend(self, data):
+        if data:
+            self.cache = data + self.cache
+    
+    def append(self, data):
+        if data:
+            self.cache = self.cache + data
+    
+    def parse(self, data):
+        if data:
+            self.cache += data
+        if self.done:
+            return []
+        output = []
+        while self.cache and not self.done:
+            data, self.cache = self.cache, ''
+            result = self.parseRaw(data)
+            if result is None: # force wait for more data
+                break
+            output.extend(result)
+        return output
+    
+    def parseRaw(self, data):
+        raise NotImplementedError
+
+class LineParser(Parser):
+    """
+    Line Parser
+    """
+    
+    linemode = True
+    delimiter = '\r\n'
+    
+    def parseRaw(self, data):
+        if self.linemode:
+            pos = data.find(self.delimiter)
+            if pos < 0:
+                self.prepend(data)
+                return None
+            line, data = data[:pos], data[pos+len(self.delimiter):]
+            self.prepend(data)
+            return self.parseLine(line)
+        else:
+            return self.parseData(data)
+    
+    def setLineMode(self, extra=''):
+        if extra:
+            self.prepend(extra)
+        self.linemode = True
+    
+    def setDataMode(self, extra=''):
+        if extra:
+            self.prepend(extra)
+        self.linemode = False
+    
+    def parseLine(self, line):
+        raise NotImplementedError
+    
+    def parseData(self, data):
+        raise NotImplementedError
+
+class HTTPRequestParser(LineParser):
     """
     HTTP Request Parser
     """
     
-    def __init__(self, callback=None, errback=None, databack=None):
+    def __init__(self):
         self.request = Request()
-        self.callback = callback
-        self.errback = errback
-        self.databack = databack
     
-    def lineReceived(self, line):
-        try:
-            if not self.request.parseLine(line):
-                self.setRawMode()
-                if self.callback:
-                    self.callback(self, self.request)
-        except:
-            self.errback(self, Failure())
-    
-    def rawDataReceived(self, data):
-        try:
-            if self.databack:
-                self.databack(self, data)
-        except:
-            self.errback(self, Failure())
+    def parseLine(self, line):
+        if not self.request.parseLine(line):
+            self.done = True
+            return [self.request]
+        return []
 
-class HTTPResponseParser(LineReceiver):
+class HTTPResponseParser(LineParser):
     """
     HTTP Response Parser
     """
     
-    def __init__(self, callback=None, errback=None, databack=None):
+    def __init__(self):
         self.response = Response()
-        self.callback = callback
-        self.errback = errback
-        self.databack = databack
     
-    def lineReceived(self, line):
-        try:
-            if not self.response.parseLine(line):
-                self.setRawMode()
-                if self.callback:
-                    self.callback(self, self.response)
-        except:
-            self.errback(self, Failure())
+    def parseLine(self, line):
+        if not self.response.parseLine(line):
+            self.done = True
+            return [self.response]
+        return []
+
+class HTTPChunkedDecoder(LineParser):
+    def __init__(self):
+        self.length = None
+        self.extensions = None
+        self.headers = None
     
-    def rawDataReceived(self, data):
-        try:
-            if self.databack:
-                self.databack(self, data)
-        except:
-            self.errback(self, Failure())
+    def parseLine(self, line):
+        if self.headers is not None:
+            # We are reading the trailer
+            if not self.headers.parseLine(line):
+                self.done = True
+                return [self.headers]
+        elif self.length == 0:
+            assert not line, "Chunk data must end with '\\r\\n'"
+            self.length = None
+        else:
+            # We must be reading chunk header
+            parts = line.split(';', 1)
+            length = int(parts[0],16)
+            if len(parts) >= 2:
+                extensions = parts[0].strip()
+            else:
+                extensions = None
+            self.length = length
+            self.extensions = extensions
+            if self.length == 0:
+                # Start reading trailer headers
+                self.headers = Headers()
+            else:
+                # Start reading chunk data
+                self.setDataMode()
+        return []
+    
+    def parseData(self, data):
+        body, data = data[:self.length], data[self.length:]
+        self.length -= len(body)
+        if self.length == 0:
+            self.setLineMode(data)
+        return [body]
+
+class HTTPIdentityDecoder(Parser):
+    def __init__(self, length=None):
+        self.length = length
+    
+    def parseRaw(self, data):
+        if self.length is None:
+            body, data = data, ''
+        elif self.length:
+            body, data = data[:self.length], data[self.length:]
+            self.length -= len(body)
+        else:
+            body = ''
+        if data:
+            self.prepend(data)
+        if body:
+            return [body]
+        return []
+
+class HTTPClientError(RuntimeError):
+    pass
 
 class HTTPClient(Protocol):
     """
@@ -280,13 +388,14 @@ class HTTPClient(Protocol):
         self.parser = None
         self.request = None
         self.response = None
-        self.bodyLength = None
+        self.decoders = None
+        self.readingChunked = False
+        self.readingUntilClosed = False
     
     def _flushBuffer(self):
         if self.parser and self.__buffer:
-            data = self.__buffer
-            self.__buffer = ''
-            self.parser.dataReceived(data)
+            data, self.__buffer = self.__buffer, ''
+            self.dataReceived(data)
     
     def _succeed(self, response):
         result = self.result
@@ -306,8 +415,7 @@ class HTTPClient(Protocol):
         
         self.state = 'TRANSMITTING'
         self.result = Deferred()
-        self.parser = HTTPResponseParser(self.parser_callback, self.parser_errback, self.parser_databack)
-        self.parser.makeConnection(self.transport)
+        self.parser = HTTPResponseParser()
         self.request = request
         self.request.writeTo(self.transport)
         self._flushBuffer()
@@ -315,7 +423,7 @@ class HTTPClient(Protocol):
     
     def connectionLost(self, failure):
         if self.result:
-            if self.response and self.bodyLength is None:
+            if self.response and self.readingUntilClosed:
                 # We were reading data up to the end
                 self._succeed(self.response)
             else:
@@ -323,30 +431,50 @@ class HTTPClient(Protocol):
                 self._fail(failure)
     
     def dataReceived(self, data):
-        if self.parser:
-            self._flushBuffer()
-            self.parser.dataReceived(data)
-            return
-        if self.response:
-            if self.bodyLength is None:
-                body, data = data, ''
-            elif self.bodyLength:
-                body, data = data[:self.bodyLength], data[self.bodyLength:]
-                self.bodyLength -= len(body)
-            else:
-                body = None
-            if body:
-                if self.response.body is None:
-                    self.response.body = ''
-                self.response.body += body
-                if self.bodyLength == 0:
-                    self._succeed(self.response)
-        if data:
-            self.__buffer += data
+        try:
+            if data and self.parser:
+                response = self.parser.parse(data)
+                if response:
+                    assert len(response) == 1
+                    response = response[0]
+                    assert self.parser.done
+                    data = self.parser.clear()
+                    self.gotResponse(response)
+                else:
+                    data = ''
+            if data and self.decoders:
+                current = [data]
+                for parser in self.decoders:
+                    output = []
+                    for chunk in current:
+                        output.extend(parser.parse(chunk))
+                    if output and isinstance(parser, HTTPChunkedDecoder):
+                        # We might have trailer headers in the output
+                        if isinstance(output[-1], Headers):
+                            headers = output.pop()
+                            for name, values in headers.iteritems():
+                                if not isinstance(values,list):
+                                    values = [values]
+                                for value in values:
+                                    self.headers.add(name, value)
+                    current = output
+                if self.decoders[0].done:
+                    data = self.decoders[0].clear()
+                    finished = True
+                else:
+                    data = ''
+                    finished = False
+                self.gotBodyBytes(''.join(current), finished)
+            if data:
+                self.__buffer += data
+        except:
+            self._fail(Failure())
     
-    def parser_callback(self, parser, response):
+    def gotResponse(self, response):
         self.parser = None
         self.response = response
+        
+        # process Content-Length
         contentLength = response.headers.get('Content-Length')
         if isinstance(contentLength, list):
             contentLength = contentLength[0]
@@ -358,14 +486,36 @@ class HTTPClient(Protocol):
             contentLength = 0
         elif contentLength is None and response.code in (204, 304):
             contentLength = 0
-        self.bodyLength = contentLength
+        
+        # process Transfer-Encoding
+        encodings = response.headers.get('Transfer-Encoding')
+        if encodings is None:
+            encodings = ['identity']
+        if not isinstance(encodings, list):
+            encodings = [encodings]
+        encodings = ', '.join(encodings)
+        encodings = [encoding.strip() for encoding in encodings.split(',')]
+        decoders = []
+        for encoding in encodings:
+            encoding = encoding.split(';', 1)[0] # strip parameters
+            encoding = encoding.strip().lower()
+            if encoding == 'chunked':
+                decoders.append(HTTPChunkedDecoder())
+                self.readingChunked = True
+            elif encoding == 'identity':
+                decoders.append(HTTPIdentityDecoder(contentLength))
+                self.readingUntilClosed = contentLength is None
+            else:
+                raise HTTPClientError("Don't know how to decode Transfer-Encoding %r" % (encoding,))
+        decoders.reverse()
+        self.decoders = decoders
     
-    def parser_errback(self, parser, failure):
-        self._fail(failure)
-    
-    def parser_databack(self, parser, data):
-        assert self.parser is not parser # shouldn't happen, will recurse otherwise
-        self.dataReceived(data)
+    def gotBodyBytes(self, body, finished=False):
+        if self.response.body is None:
+            self.response.body = ''
+        self.response.body += body
+        if finished:
+            self._succeed(self.response)
 
 def make_http_request(reactor, host, port, request):
     d = Deferred()
