@@ -13,8 +13,54 @@ def _canonicalHeaderName(name):
 class HeadersError(RuntimeError):
     pass
 
-class Headers(dict):
+HeadersBase = dict
+class Headers(HeadersBase):
     _partialHeader = None
+    
+    def __init__(self, data=()):
+        HeadersBase.__init__(self)
+        if data:
+            self.update(data)
+    
+    def __getitem__(self, name):
+        return HeadersBase.__getitem__(self, name.lower())
+    
+    def __setitem__(self, name, value):
+        return HeadersBase.__setitem__(self, name.lower(), value)
+    
+    def __delitem__(self, name):
+        return HeadersBase.__delitem__(self, name)
+    
+    def __contains__(self, name):
+        return HeadersBase.__contains__(self, name.lower())
+    
+    def has_key(self, name):
+        return HeadersBase.has_key(self, name.lower())
+    
+    def get(self, name, *args):
+        return HeadersBase.get(self, name.lower(), *args)
+    
+    def pop(self, name, *args):
+        return HeadersBase.pop(self, name.lower(), *args)
+    
+    def setdefault(self, name, *args):
+        return HeadersBase.setdefault(self, name.lower(), *args)
+    
+    def update(self, data=()):
+        if hasattr(data, 'iteritems'):
+            data = data.iteritems()
+        for name, value in data:
+            self[name] = value
+    
+    def add(self, name, value):
+        values = self.get(name)
+        if isinstance(values, list):
+            values.append(value)
+        elif isinstance(values, basestring):
+            values = [values, value]
+            self[name] = values
+        else:
+            self[name] = value
     
     def flushPartialHeader(self):
         if self._partialHeader:
@@ -23,13 +69,11 @@ class Headers(dict):
             parts = header.split(':', 1)
             if len(parts) != 2:
                 raise HeadersError("header must be in 'name: value' format")
-            name = parts[0].rstrip().lower()
+            name = parts[0].rstrip()
             value = parts[1].strip()
-            values = self.setdefault(name, [])
-            if isinstance(values,basestring):
-                values = [values]
-                self[name] = values
-            values.append(value)
+            if not name:
+                raise HeadersError("header must be in 'name: value' format")
+            self.add(name, value)
     
     def parseLine(self, line):
         if not line or not line[0] in ' \t':
@@ -60,10 +104,10 @@ class Request(object):
     
     def _writeHeaders(self, transport):
         lines = ["%s %s HTTP/%d.%d\r\n" % (self.method, self.path, self.version[0], self.version[1])]
-        for name,values in self.headers.iteritems():
+        for name, values in self.headers.iteritems():
             name = _canonicalHeaderName(name)
-            if isinstance(values,basestring):
-                values = (values,)
+            if not isinstance(values, list):
+                values = [values]
             for value in values:
                 lines.append("%s: %s\r\n" % (name, value))
         lines.append("\r\n")
@@ -120,10 +164,10 @@ class Response(object):
     
     def _writeHeaders(self, transport):
         lines = ["HTTP/%d.%d %d %s" % (self.version[0], self.version[1], self.code, self.phrase)]
-        for name,values in self.headers.iteritems():
+        for name, values in self.headers.iteritems():
             name = _canonicalHeaderName(name)
-            if isinstance(values,basestring):
-                values = (values,)
+            if not isinstance(values, list):
+                values = [values]
             for value in values:
                 lines.append("%s: %s\r\n" % (name, value))
         lines.append("\r\n")
@@ -167,45 +211,10 @@ class Response(object):
                 self._parserState = 'DONE'
         return line and True or False
 
-class HTTPClientParser(LineReceiver):
+class HTTPRequestParser(LineReceiver):
     """
-    HTTP Client Parser
+    HTTP Request Parser
     """
-    
-    state = 'RESPONSE'
-    
-    def __init__(self, callback=None, errback=None, databack=None):
-        self.response = Response()
-        self.callback = callback
-        self.errback = errback
-        self.databack = databack
-    
-    def lineReceived(self, line):
-        try:
-            if self.state == 'RESPONSE':
-                if not self.response.parseLine(line):
-                    self.state = 'DATA'
-                    self.setRawMode()
-                    if self.callback:
-                        self.callback(self, self.response)
-        except:
-            self.state = 'ERROR'
-            self.errback(self, Failure())
-    
-    def rawDataReceived(self, data):
-        try:
-            if self.databack:
-                self.databack(self, data)
-        except:
-            self.state = 'ERROR'
-            self.errback(self, Failure())
-
-class HTTPServerParser(LineReceiver):
-    """
-    HTTP Server Parser
-    """
-    
-    state = 'REQUEST'
     
     def __init__(self, callback=None, errback=None, databack=None):
         self.request = Request()
@@ -215,14 +224,11 @@ class HTTPServerParser(LineReceiver):
     
     def lineReceived(self, line):
         try:
-            if self.state == 'REQUEST':
-                if not self.request.parseLine(line):
-                    self.state = 'DATA'
-                    self.setRawMode()
-                    if self.callback:
-                        self.callback(self, self.request)
+            if not self.request.parseLine(line):
+                self.setRawMode()
+                if self.callback:
+                    self.callback(self, self.request)
         except:
-            self.state = 'ERROR'
             self.errback(self, Failure())
     
     def rawDataReceived(self, data):
@@ -230,7 +236,33 @@ class HTTPServerParser(LineReceiver):
             if self.databack:
                 self.databack(self, data)
         except:
-            self.state = 'ERROR'
+            self.errback(self, Failure())
+
+class HTTPResponseParser(LineReceiver):
+    """
+    HTTP Response Parser
+    """
+    
+    def __init__(self, callback=None, errback=None, databack=None):
+        self.response = Response()
+        self.callback = callback
+        self.errback = errback
+        self.databack = databack
+    
+    def lineReceived(self, line):
+        try:
+            if not self.response.parseLine(line):
+                self.setRawMode()
+                if self.callback:
+                    self.callback(self, self.response)
+        except:
+            self.errback(self, Failure())
+    
+    def rawDataReceived(self, data):
+        try:
+            if self.databack:
+                self.databack(self, data)
+        except:
             self.errback(self, Failure())
 
 class HTTPClient(Protocol):
@@ -248,7 +280,7 @@ class HTTPClient(Protocol):
         self.parser = None
         self.request = None
         self.response = None
-        self.contentLength = None
+        self.bodyLength = None
     
     def _flushBuffer(self):
         if self.parser and self.__buffer:
@@ -258,14 +290,14 @@ class HTTPClient(Protocol):
     
     def _succeed(self, response):
         result = self.result
+        self._reset()
         if result:
-            self._reset()
             result.callback(response)
     
     def _fail(self, failure):
         result = self.result
+        self._reset()
         if result:
-            self._reset()
             result.errback(failure)
     
     def makeRequest(self, request):
@@ -274,7 +306,7 @@ class HTTPClient(Protocol):
         
         self.state = 'TRANSMITTING'
         self.result = Deferred()
-        self.parser = HTTPClientParser(self.parser_callback, self.parser_errback, self.parser_databack)
+        self.parser = HTTPResponseParser(self.parser_callback, self.parser_errback, self.parser_databack)
         self.parser.makeConnection(self.transport)
         self.request = request
         self.request.writeTo(self.transport)
@@ -282,12 +314,13 @@ class HTTPClient(Protocol):
         return self.result
     
     def connectionLost(self, failure):
-        if self.response and self.contentLength is None:
-            # We were reading data up to the end
-            self._succeed(self.response)
-        else:
-            # We were either parsing or reading data
-            self._fail(failure)
+        if self.result:
+            if self.response and self.bodyLength is None:
+                # We were reading data up to the end
+                self._succeed(self.response)
+            else:
+                # We were either parsing or reading data
+                self._fail(failure)
     
     def dataReceived(self, data):
         if self.parser:
@@ -295,18 +328,18 @@ class HTTPClient(Protocol):
             self.parser.dataReceived(data)
             return
         if self.response:
-            if self.contentLength is None:
+            if self.bodyLength is None:
                 body, data = data, ''
-            elif self.contentLength:
-                body, data = data[:self.contentLength], data[self.contentLength:]
-                self.contentLength -= len(body)
+            elif self.bodyLength:
+                body, data = data[:self.bodyLength], data[self.bodyLength:]
+                self.bodyLength -= len(body)
             else:
                 body = None
             if body:
                 if self.response.body is None:
                     self.response.body = ''
                 self.response.body += body
-                if self.contentLength == 0:
+                if self.bodyLength == 0:
                     self._succeed(self.response)
         if data:
             self.__buffer += data
@@ -314,14 +347,18 @@ class HTTPClient(Protocol):
     def parser_callback(self, parser, response):
         self.parser = None
         self.response = response
-        contentLength = response.headers.get('content-length')
-        if contentLength:
-            contentLength = contentLength[0] or None
+        contentLength = response.headers.get('Content-Length')
+        if isinstance(contentLength, list):
+            contentLength = contentLength[0]
         if contentLength:
             contentLength = int(contentLength)
-        if response.code in (204, 304) or self.request.method == 'HEAD':
+        else:
+            contentLength = None
+        if self.request.method == 'HEAD':
             contentLength = 0
-        self.contentLength = contentLength
+        elif contentLength is None and response.code in (204, 304):
+            contentLength = 0
+        self.bodyLength = contentLength
     
     def parser_errback(self, parser, failure):
         self._fail(failure)
