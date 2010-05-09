@@ -1,3 +1,4 @@
+from urlparse import urlsplit, urljoin
 from zope.interface import implements
 from twisted.python.failure import Failure
 from twisted.internet.protocol import Protocol, ClientCreator
@@ -362,6 +363,8 @@ class HTTPIdentityDecoder(Parser):
         elif self.length:
             body, data = data[:self.length], data[self.length:]
             self.length -= len(body)
+            if self.length == 0:
+                self.done = True
         else:
             body = ''
         if data:
@@ -517,13 +520,107 @@ class HTTPClient(Protocol):
         if finished:
             self._succeed(self.response)
 
-def make_http_request(reactor, host, port, request):
-    d = Deferred()
-    def gotProtocol(http):
-        def httpClose(*args):
-            http.transport.loseConnection()
-        r = http.makeRequest(request)
-        r.chainDeferred(d).addBoth(httpClose)
-    c = ClientCreator(reactor, HTTPClient)
-    c.connectTCP(host, port).addCallbacks(gotProtocol, d.errback)
-    return d
+class HTTPAgent(object):
+    def __init__(self):
+        self.reactor = None
+        self.proxy = None
+        self.result = None
+        self.request = None
+        self.client = None
+        self.current_host = None
+        self.current_port = None
+        self.current_url = None
+    
+    def _succeeded(self, response):
+        if self.result:
+            if self.client:
+                self.client.transport.loseConnection()
+                self.client = None
+            self.result.callback(response)
+            self.result = None
+        else:
+            raise RuntimeError, "_succeded called without result"
+    
+    def _failed(self, failure):
+        if self.result:
+            if self.client:
+                self.client.transport.loseConnection()
+                self.client = None
+            self.result.errback(failure)
+            self.result = None
+        else:
+            raise RuntimeError, "_failed called without result"
+    
+    def parseArguments(self, url, method='GET', version=(1,1), headers=(), body=None, proxy=None):
+        scheme, netloc, path, query, fragment = urlsplit(url)
+        if ':' in netloc:
+            host, port = netloc.split(':')
+            port = int(port)
+        else:
+            host = netloc
+            if scheme == 'https':
+                port = 443
+            else:
+                port = 80
+        if proxy is None:
+            if not path.startswith('/'):
+                path = '/' + path
+            if query:
+                path = path + '?' + query
+        else:
+            path = url
+        headers = Headers(headers)
+        headers['Host'] = netloc
+        if body:
+            headers['Content-Length'] = "%d" % (len(body),)
+        if proxy is not None:
+            host, port = proxy.split(':', 1)
+            port = int(port)
+        return host, port, Request(method=method, path=path, version=version, headers=headers, body=body)
+    
+    def makeRequest(self, reactor, url, method='GET', version=(1,1), headers=(), body=None, proxy=None):
+        self.reactor = reactor
+        host, port, request = self.parseArguments(url, method, version, headers, body, proxy)
+        self.proxy = proxy
+        self.result = Deferred()
+        self.request = request
+        self.current_url  = url
+        self.connectTo(host, port)
+        return self.result
+    
+    def connectTo(self, host, port):
+        if self.client:
+            if (self.current_host, self.current_port) == (host, port):
+                # no need to reconnect, reuse current client
+                r = self.client.makeRequest(self.request)
+                r.addCallback(self.gotResponse).addErrback(self.gotError)
+                return
+            self.client.transport.loseConnection()
+            self.client = None
+        self.current_host = host
+        self.current_port = port
+        c = ClientCreator(self.reactor, HTTPClient)
+        c.connectTCP(host, port).addCallback(self.gotProtocol).addErrback(self.gotError)
+    
+    def gotProtocol(self, protocol):
+        self.client = protocol
+        peer = self.client.transport.getPeer()
+        r = self.client.makeRequest(self.request)
+        r.addCallback(self.gotResponse).addErrback(self.gotError)
+    
+    def gotResponse(self, response):
+        if response.code in (301, 302, 303, 307):
+            url = response.headers.get('Location')
+            if url and isinstance(url, list):
+                url = url[0]
+            if url:
+                url = urljoin(self.current_url, url)
+                host, port, request = self.parseArguments(url, self.request.method, self.request.version, self.request.headers, self.request.body, self.proxy)
+                self.request = request
+                self.current_url = url
+                self.connectTo(host, port)
+                return
+        self._succeeded(response)
+    
+    def gotError(self, failure):
+        self._failed(failure)
