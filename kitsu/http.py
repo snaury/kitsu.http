@@ -1,3 +1,6 @@
+# Copyright (c) 2010 Alexey Borzenkov.
+# See LICENSE for details.
+
 from urlparse import urlsplit, urljoin
 from zope.interface import implements
 from twisted.python.failure import Failure
