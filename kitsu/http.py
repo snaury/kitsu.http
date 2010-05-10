@@ -2,7 +2,6 @@ from urlparse import urlsplit, urljoin
 from zope.interface import implements
 from twisted.python.failure import Failure
 from twisted.internet.protocol import Protocol, ClientCreator
-from twisted.protocols.basic import LineReceiver
 from twisted.internet.defer import Deferred, maybeDeferred
 
 _canonicalHeaderParts = { 'www' : 'WWW' }
@@ -96,15 +95,15 @@ class Request(object):
     
     _parserState = 'COMMAND'
     
-    def __init__(self, method="GET", path="/", version=(1,1), headers=(), body=None):
+    def __init__(self, method="GET", target="/", version=(1,1), headers=(), body=None):
         self.method = method
-        self.path = path
+        self.target = target
         self.version = version
         self.headers = Headers(headers)
         self.body = body
     
     def _writeHeaders(self, transport):
-        lines = ["%s %s HTTP/%d.%d\r\n" % (self.method, self.path, self.version[0], self.version[1])]
+        lines = ["%s %s HTTP/%d.%d\r\n" % (self.method, self.target, self.version[0], self.version[1])]
         for name, values in self.headers.iteritems():
             name = _canonicalHeaderName(name)
             if not isinstance(values, list):
@@ -122,8 +121,8 @@ class Request(object):
     def _parseCommand(self, line):
         parts = line.split(None, 2)
         if len(parts) != 3:
-            raise RequestError("request must be in 'METHOD path HTTP/n.n' format")
-        method, path, version = parts
+            raise RequestError("request must be in 'METHOD target HTTP/n.n' format")
+        method, target, version = parts
         if not version.startswith('HTTP/'):
             raise RequestError("protocol must be HTTP")
         version = version[5:].split('.')
@@ -134,11 +133,15 @@ class Request(object):
         except ValueError:
             raise RuntimeError("invalid version")
         self.method = method
-        self.path = path
+        self.target = target
         self.version = version
     
     def parseLine(self, line):
         if self._parserState == 'COMMAND':
+            if not line:
+                # http://www.w3.org/Protocols/rfc2616/rfc2616-sec4.html
+                # We just ignore all empty lines for maximum compatibility
+                return True
             self._parseCommand(line)
             self._parserState = 'HEADERS'
         elif self._parserState == 'HEADERS':
@@ -205,6 +208,10 @@ class Response(object):
     
     def parseLine(self, line):
         if self._parserState == 'STATUS':
+            if not line:
+                # http://www.w3.org/Protocols/rfc2616/rfc2616-sec4.html
+                # We just ignore all empty lines for maximum compatibility
+                return True
             self._parseStatus(line)
             self._parserState = 'HEADERS'
         elif self._parserState == 'HEADERS':
@@ -245,6 +252,10 @@ class Parser(object):
                 break
             output.extend(result)
         return output
+    
+    def finish(self):
+        self.done = True
+        return []
     
     def parseRaw(self, data):
         raise NotImplementedError
@@ -373,6 +384,27 @@ class HTTPIdentityDecoder(Parser):
             return [body]
         return []
 
+class HTTPDeflateDecoder(Parser):
+    def __init__(self):
+        from zlib import decompressobj
+        self.obj = decompressobj()
+    
+    def parseRaw(self, data):
+        data = self.obj.decompress(data)
+        if data:
+            return [data]
+        return []
+    
+    def finish(self):
+        if not self.done:
+            self.done = True
+            data = self.obj.flush()
+            self.prepend(self.obj.unused_data)
+            self.obj = None
+            if data:
+                return [data]
+        return []
+
 class HTTPClientError(RuntimeError):
     pass
 
@@ -382,10 +414,10 @@ class HTTPClient(Protocol):
     """
     
     def __init__(self):
-        self._reset()
+        self.__reset()
     
-    def _reset(self):
-        self.__buffer = None
+    def __reset(self):
+        self.__buffer = ''
         self.state = 'IDLE'
         self.result = None
         self.parser = None
@@ -395,22 +427,21 @@ class HTTPClient(Protocol):
         self.readingChunked = False
         self.readingUntilClosed = False
     
-    def _flushBuffer(self):
-        if self.parser and self.__buffer:
-            data, self.__buffer = self.__buffer, ''
-            self.dataReceived(data)
-    
-    def _succeed(self, response):
+    def __succeeded(self, response):
         result = self.result
-        self._reset()
-        if result:
+        self.__reset()
+        if result is not None:
             result.callback(response)
     
-    def _fail(self, failure):
+    def __failed(self, failure):
         result = self.result
-        self._reset()
-        if result:
+        self.__reset()
+        if result is not None:
             result.errback(failure)
+    
+    def clearBuffer(self):
+        data, self.__buffer = self.__buffer, ''
+        return data
     
     def makeRequest(self, request):
         if self.state != 'IDLE':
@@ -421,17 +452,39 @@ class HTTPClient(Protocol):
         self.parser = HTTPResponseParser()
         self.request = request
         self.request.writeTo(self.transport)
-        self._flushBuffer()
+        if self.__buffer:
+            self.dataReceived(self.clearBuffer())
         return self.result
     
-    def connectionLost(self, failure):
-        if self.result:
-            if self.response and self.readingUntilClosed:
-                # We were reading data up to the end
-                self._succeed(self.response)
-            else:
-                # We were either parsing or reading data
-                self._fail(failure)
+    def decodeBody(self, data=''):
+        if not self.decoders:
+            return ''
+        if data:
+            current = [data]
+        else:
+            current = []
+        prevdone = False
+        if not current:
+            # If we are called without data then finish the chain
+            prevdone = True
+        for decoder in self.decoders:
+            output = []
+            for chunk in current:
+                output.extend(decoder.parse(chunk))
+            if output and isinstance(decoder, HTTPChunkedDecoder):
+                # We might have trailer headers in the output
+                if isinstance(output[-1], Headers):
+                    headers = output.pop()
+                    for name, values in headers.iteritems():
+                        if not isinstance(values, list):
+                            values = [values]
+                        for value in values:
+                            self.response.headers.add(name, value)
+            if prevdone:
+                output.extend(decoder.finish())
+            current = output
+            prevdone = decoder.done
+        return ''.join(current)
     
     def dataReceived(self, data):
         try:
@@ -442,39 +495,34 @@ class HTTPClient(Protocol):
                     response = response[0]
                     assert self.parser.done
                     data = self.parser.clear()
+                    self.parser = None
                     self.gotResponse(response)
                 else:
                     data = ''
             if data and self.decoders:
-                current = [data]
-                for parser in self.decoders:
-                    output = []
-                    for chunk in current:
-                        output.extend(parser.parse(chunk))
-                    if output and isinstance(parser, HTTPChunkedDecoder):
-                        # We might have trailer headers in the output
-                        if isinstance(output[-1], Headers):
-                            headers = output.pop()
-                            for name, values in headers.iteritems():
-                                if not isinstance(values,list):
-                                    values = [values]
-                                for value in values:
-                                    self.headers.add(name, value)
-                    current = output
+                body = self.decodeBody(data)
                 if self.decoders[0].done:
                     data = self.decoders[0].clear()
-                    finished = True
+                    self.gotBody(body, True)
                 else:
                     data = ''
-                    finished = False
-                self.gotBodyBytes(''.join(current), finished)
-            if data:
-                self.__buffer += data
+                    self.gotBody(body)
+            self.__buffer += data
         except:
-            self._fail(Failure())
+            self.__failed(Failure())
     
+    def connectionLost(self, failure):
+        if self.result is not None:
+            if self.response and self.readingUntilClosed:
+                # We were reading data up to the end
+                self.gotBody(self.decodeBody(), True)
+            else:
+                # We were either parsing or reading data
+                self.__failed(failure)
+    
+    responseCodesWithoutBody = frozenset((204, 304))
+    requestMethodsWithoutBody = frozenset(('HEAD', 'CONNECT'))
     def gotResponse(self, response):
-        self.parser = None
         self.response = response
         
         # process Content-Length
@@ -485,142 +533,235 @@ class HTTPClient(Protocol):
             contentLength = int(contentLength)
         else:
             contentLength = None
-        if self.request.method == 'HEAD':
+        if self.request.method in self.requestMethodsWithoutBody:
             contentLength = 0
-        elif contentLength is None and response.code in (204, 304):
+        if contentLength is None and response.code in self.responseCodesWithoutBody:
             contentLength = 0
+        if contentLength == 0:
+            # There is no body, so we can succeed right now
+            self.__succeeded(response)
+            return
         
         # process Transfer-Encoding
         encodings = response.headers.get('Transfer-Encoding')
         if encodings is None:
             encodings = ['identity']
-        if not isinstance(encodings, list):
+        elif not isinstance(encodings, list):
             encodings = [encodings]
         encodings = ', '.join(encodings)
         encodings = [encoding.strip() for encoding in encodings.split(',')]
+        encodings.reverse()
         decoders = []
+        baseDecoderFound = False
         for encoding in encodings:
             encoding = encoding.split(';', 1)[0] # strip parameters
             encoding = encoding.strip().lower()
             if encoding == 'chunked':
+                assert not decoders, "Transfer-Encoding 'chunked' must be the last in chain"
                 decoders.append(HTTPChunkedDecoder())
                 self.readingChunked = True
+                baseDecoderFound = True
             elif encoding == 'identity':
-                decoders.append(HTTPIdentityDecoder(contentLength))
-                self.readingUntilClosed = contentLength is None
+                assert not decoders, "Transfer-Encoding 'identity' must be the last in chain"
+                continue
+            elif encoding == 'deflate':
+                decoders.append(HTTPDeflateDecoder())
             else:
+                # TODO: implement gzip?
                 raise HTTPClientError("Don't know how to decode Transfer-Encoding %r" % (encoding,))
-        decoders.reverse()
+        if not baseDecoderFound:
+            decoders.insert(0, HTTPIdentityDecoder(contentLength))
+            self.readingUntilClosed = contentLength is None
         self.decoders = decoders
     
-    def gotBodyBytes(self, body, finished=False):
+    def gotBody(self, body, finished=False):
         if self.response.body is None:
             self.response.body = ''
         self.response.body += body
         if finished:
-            self._succeed(self.response)
+            self.__succeeded(self.response)
 
-class HTTPAgent(object):
-    def __init__(self):
-        self.reactor = None
-        self.proxy = None
-        self.result = None
-        self.request = None
-        self.client = None
-        self.current_host = None
-        self.current_port = None
-        self.current_url = None
-    
-    def _succeeded(self, response):
-        if self.result:
-            if self.client:
-                self.client.transport.loseConnection()
-                self.client = None
-            self.result.callback(response)
-            self.result = None
-        else:
-            raise RuntimeError, "_succeded called without result"
-    
-    def _failed(self, failure):
-        if self.result:
-            if self.client:
-                self.client.transport.loseConnection()
-                self.client = None
-            self.result.errback(failure)
-            self.result = None
-        else:
-            raise RuntimeError, "_failed called without result"
-    
-    def parseArguments(self, url, method='GET', version=(1,1), headers=(), body=None, proxy=None):
-        scheme, netloc, path, query, fragment = urlsplit(url)
-        if ':' in netloc:
-            host, port = netloc.split(':')
+class HTTPAgentArgs(object):
+    def __init__(self, url, method, version, headers, body, referer, proxy, proxyheaders):
+        self.url = url
+        self.method = method
+        self.version = version
+        self.headers = headers
+        self.body = body
+        self.referer = referer
+        
+        # Convert proxy to (host, port)
+        if isinstance(proxy, basestring):
+            if proxy:
+                proxy = proxy.split(':', 1)
+            else:
+                proxy = None
+        if proxy:
+            assert len(proxy) == 2, "Proxy must be in host:port format"
+            if isinstance(proxy[1], basestring): # convert port to number
+                proxy = (proxy[0], int(proxy[1]))
+        self.proxy = proxy
+        self.proxyheaders = proxyheaders
+        
+        # Split url into parts and determine host, port and target
+        self.scheme, self.netloc, self.path, self.query, self.fragment = urlsplit(self.url)
+        if ':' in self.netloc:
+            host, port = self.netloc.split(':', 1)
             port = int(port)
         else:
-            host = netloc
-            if scheme == 'https':
+            host = self.netloc
+            if self.scheme == 'https':
                 port = 443
             else:
                 port = 80
-        if proxy is None:
-            if not path.startswith('/'):
-                path = '/' + path
-            if query:
-                path = path + '?' + query
-        else:
-            path = url
-        headers = Headers(headers)
-        headers['Host'] = netloc
-        if body:
-            headers['Content-Length'] = "%d" % (len(body),)
-        if proxy is not None:
-            host, port = proxy.split(':', 1)
-            port = int(port)
-        return host, port, Request(method=method, path=path, version=version, headers=headers, body=body)
+        self.netloc_addr = (host, port)
+        if self.proxy:
+            host, port = self.proxy
+        self.host = host
+        self.port = port
+        self.target = self.path
+        if not self.target.startswith('/'):
+            self.target = '/' + self.target
+        if self.query:
+            self.target = self.target + '?' + self.query
+        self.request = None
+        self.tunneling = False
     
-    def makeRequest(self, reactor, url, method='GET', version=(1,1), headers=(), body=None, proxy=None):
-        self.reactor = reactor
-        host, port, request = self.parseArguments(url, method, version, headers, body, proxy)
-        self.proxy = proxy
-        self.result = Deferred()
+    def makeRequest(self):
+        request = Request(self.method, self.target, self.version, self.headers, self.body)
+        if self.body:
+            request.headers['Content-Length'] = "%d" % len(self.body)
+        if self.referer:
+            scheme, netloc, path, query, fragment = urlsplit(self.referer)
+            if scheme != 'https' or self.scheme == scheme:
+                # Add referer unless moving away from https
+                request.headers['Referer'] = self.referer
+        if self.proxy:
+            if self.scheme == 'https':
+                if not self.tunneling:
+                    # We must use proxy to connect to netloc
+                    request.method = 'CONNECT'
+                    request.target = "%s:%d" % self.netloc_addr
+                    # Don't disclose request headers to https proxy
+                    request.headers = Headers()
+                # If we are using a tunnel we should make a regular request
+            else:
+                # Use proxy to retrieve target url
+                request.target = self.url
+            if not self.tunneling:
+                headers = Headers(self.proxyheaders)
+                for name, values in headers.iteritems():
+                    # Should we really use Headers.add?
+                    request.headers[name] = values
+        # Always specify the host we are connecting to
+        request.headers['Host'] = self.netloc
         self.request = request
-        self.current_url  = url
-        self.connectTo(host, port)
-        return self.result
+        return request
+
+class HTTPAgentError(RuntimeError):
+    pass
+
+class HTTPAgent(object):
+    def __init__(self, reactor, contextFactory=None):
+        self.reactor = reactor
+        self.contextFactory = contextFactory
+        self.args = None
+        self.result = None
+        self.client = None
     
-    def connectTo(self, host, port):
-        if self.client:
-            if (self.current_host, self.current_port) == (host, port):
-                # no need to reconnect, reuse current client
-                r = self.client.makeRequest(self.request)
-                r.addCallback(self.gotResponse).addErrback(self.gotError)
-                return
+    def __succeeded(self, response):
+        self.closeClient()
+        if self.result is not None:
+            self.result.callback(response)
+            self.result = None
+    
+    def __failed(self, failure):
+        self.closeClient()
+        if self.result is not None:
+            self.result.errback(failure)
+            self.result = None
+    
+    def closeClient(self):
+        if self.client is not None:
             self.client.transport.loseConnection()
             self.client = None
-        self.current_host = host
-        self.current_port = port
+    
+    def __startRequest(self):
+        r = self.client.makeRequest(self.args.makeRequest())
+        r.addCallback(self.gotResponse).addErrback(self.__failed)
+    
+    def getContextFactory(self):
+        if self.contextFactory is None:
+            from twisted.internet import ssl
+            self.contextFactory = ssl.ClientContextFactory()
+        return self.contextFactory
+    
+    def __makeRequest(self, url, method, version, headers, body, referer, proxy, proxyheaders):
+        if self.result is None:
+            self.result = Deferred()
+        oldargs, newargs = self.args, HTTPAgentArgs(url=url, method=method, version=version, headers=headers, body=body, referer=referer, proxy=proxy, proxyheaders=proxyheaders)
+        self.args = newargs
+        if self.client is not None:
+            reuse = False
+            if oldargs is not None and (oldargs.host, oldargs.port) == (newargs.host, newargs.port):
+                # don't reconnect, maybe we can reuse current client
+                if oldargs.tunneling:
+                    # reuse only if netloc didn't change
+                    reuse = newargs.netloc_addr == oldargs.netloc_addr
+                else:
+                    reuse = True
+                if reuse:
+                    newargs.tunneling = oldargs.tunneling
+                    self.__startRequest()
+                    return self.result
+            self.closeClient()
         c = ClientCreator(self.reactor, HTTPClient)
-        c.connectTCP(host, port).addCallback(self.gotProtocol).addErrback(self.gotError)
+        if newargs.scheme == 'https' and not newargs.proxy:
+            d = c.connectSSL(newargs.host, newargs.port, contextFactory=self.getContextFactory())
+        else:
+            d = c.connectTCP(newargs.host, newargs.port)
+        d.addCallback(self.gotProtocol).addErrback(self.__failed)
+        return self.result
+    
+    def makeRequest(self, url, method='GET', version=(1,1), headers=(), body=None, referer=None, proxy=None, proxyheaders=()):
+        if self.result is not None:
+            raise HTTPAgentError, "Cannot make new requests while another one is pending"
+        return self.__makeRequest(url=url, method=method, version=version, headers=headers, body=body, referer=referer, proxy=proxy, proxyheaders=proxyheaders)
     
     def gotProtocol(self, protocol):
         self.client = protocol
-        peer = self.client.transport.getPeer()
-        r = self.client.makeRequest(self.request)
-        r.addCallback(self.gotResponse).addErrback(self.gotError)
+        self.__startRequest()
     
     def gotResponse(self, response):
+        keepalive = response.version >= (1,1)
+        if 'Connection' in response.headers:
+            # Connection header(s) might override the default
+            values = response.headers['Connection']
+            if isinstance(values, list):
+                values = ', '.join(values)
+            values = [value.strip().lower() for value in values.split(',')]
+            if 'keep-alive' in values:
+                keepalive = True
+            if 'close' in values:
+                keepalive = False
+        if not keepalive:
+            # Close connection if Keep-Alive is not supported
+            self.closeClient()
         if response.code in (301, 302, 303, 307):
+            # Process redirects
             url = response.headers.get('Location')
             if url and isinstance(url, list):
                 url = url[0]
             if url:
-                url = urljoin(self.current_url, url)
-                host, port, request = self.parseArguments(url, self.request.method, self.request.version, self.request.headers, self.request.body, self.proxy)
-                self.request = request
-                self.current_url = url
-                self.connectTo(host, port)
+                url = urljoin(self.args.url, url)
+                # TODO: don't allow too many redirects
+                self.__makeRequest(url=url, method=self.args.method, version=self.args.version, headers=self.args.headers, body=self.args.body, referer=self.args.url, proxy=self.args.proxy, proxyheaders=self.args.proxyheaders)
                 return
-        self._succeeded(response)
-    
-    def gotError(self, failure):
-        self._failed(failure)
+        if response.code == 200 and self.args.request.method == 'CONNECT':
+            # Our https tunnel connected, make a real request
+            self.client.transport.startTLS(self.getContextFactory())
+            self.client.transport.startWriting()
+            self.args.tunneling = True
+            self.__startRequest()
+            return
+        self.__succeeded(response)
