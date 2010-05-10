@@ -2,10 +2,17 @@
 # See LICENSE for details.
 
 from urlparse import urlsplit, urljoin
-from zope.interface import implements
 from twisted.python.failure import Failure
 from twisted.internet.protocol import Protocol, ClientCreator
 from twisted.internet.defer import fail, Deferred
+
+__all__ = [
+    'HTTPError',
+    'Headers',
+    'Request',
+    'Response',
+    'HTTPAgent',
+]
 
 _canonicalHeaderParts = { 'www' : 'WWW' }
 def _canonicalHeaderName(name):
@@ -13,7 +20,7 @@ def _canonicalHeaderName(name):
         return _canonicalHeaderParts.get(part) or part.capitalize()
     return '-'.join(canonical(part.lower()) for part in name.split('-'))
 
-class HeadersError(RuntimeError):
+class HTTPError(RuntimeError):
     pass
 
 HeadersBase = dict
@@ -65,17 +72,28 @@ class Headers(HeadersBase):
         else:
             self[name] = value
     
+    def toLines(self, lines=None):
+        if lines is None:
+            lines = []
+        for name, values in self.iteritems():
+            name = _canonicalHeaderName(name)
+            if not isinstance(values, list):
+                values = [values]
+            for value in values:
+                lines.append("%s: %s\r\n" % (name, value))
+        return lines
+    
     def flushPartialHeader(self):
         if self._partialHeader:
             header = ''.join(self._partialHeader)
             del self._partialHeader
             parts = header.split(':', 1)
             if len(parts) != 2:
-                raise HeadersError("header must be in 'name: value' format")
+                raise HTTPError("header must be in 'name: value' format")
             name = parts[0].rstrip()
             value = parts[1].strip()
             if not name:
-                raise HeadersError("header must be in 'name: value' format")
+                raise HTTPError("header must be in 'name: value' format")
             self.add(name, value)
     
     def parseLine(self, line):
@@ -87,9 +105,6 @@ class Headers(HeadersBase):
             if self._partialHeader:
                 self._partialHeader.append(line)
         return line and True or False
-
-class RequestError(RuntimeError):
-    pass
 
 class Request(object):
     """
@@ -107,12 +122,7 @@ class Request(object):
     
     def _writeHeaders(self, transport):
         lines = ["%s %s HTTP/%d.%d\r\n" % (self.method, self.target, self.version[0], self.version[1])]
-        for name, values in self.headers.iteritems():
-            name = _canonicalHeaderName(name)
-            if not isinstance(values, list):
-                values = [values]
-            for value in values:
-                lines.append("%s: %s\r\n" % (name, value))
+        self.headers.toLines(lines)
         lines.append("\r\n")
         transport.writeSequence(lines)
     
@@ -124,17 +134,17 @@ class Request(object):
     def _parseCommand(self, line):
         parts = line.split(None, 2)
         if len(parts) != 3:
-            raise RequestError("request must be in 'METHOD target HTTP/n.n' format")
+            raise HTTPError("request must be in 'METHOD target HTTP/n.n' format")
         method, target, version = parts
         if not version.startswith('HTTP/'):
-            raise RequestError("protocol must be HTTP")
+            raise HTTPError("protocol must be HTTP")
         version = version[5:].split('.')
         if len(version) != 2:
-            raise RequestError("invalid version")
+            raise HTTPError("invalid version")
         try:
             version = (int(version[0]), int(version[1]))
         except ValueError:
-            raise RuntimeError("invalid version")
+            raise HTTPError("invalid version")
         self.method = method
         self.target = target
         self.version = version
@@ -152,9 +162,6 @@ class Request(object):
                 self._parserState = 'DONE'
         return line and True or False
 
-class ResponseError(RuntimeError):
-    pass
-
 class Response(object):
     """
     HTTP Response
@@ -171,12 +178,7 @@ class Response(object):
     
     def _writeHeaders(self, transport):
         lines = ["HTTP/%d.%d %d %s" % (self.version[0], self.version[1], self.code, self.phrase)]
-        for name, values in self.headers.iteritems():
-            name = _canonicalHeaderName(name)
-            if not isinstance(values, list):
-                values = [values]
-            for value in values:
-                lines.append("%s: %s\r\n" % (name, value))
+        self.headers.toLines(lines)
         lines.append("\r\n")
         transport.writeSequence(lines)
     
@@ -188,23 +190,23 @@ class Response(object):
     def _parseStatus(self, line):
         parts = line.split(None, 2)
         if len(parts) not in (2, 3):
-            raise ResponseError("response must be in 'HTTP/n.n status message' format")
+            raise HTTPError("response must be in 'HTTP/n.n status message' format")
         version = parts[0]
         code = parts[1]
         phrase = len(parts) >= 3 and parts[2] or ""
         if not version.startswith('HTTP/'):
-            raise ResponseError("protocol must be HTTP")
+            raise HTTPError("protocol must be HTTP")
         version = version[5:].split('.')
         if len(version) != 2:
-            raise ResponseError("invalid version")
+            raise HTTPError("invalid version")
         try:
             version = (int(version[0]), int(version[1]))
         except ValueError:
-            raise ResponseError("invalid version")
+            raise HTTPError("invalid version")
         try:
             code = int(code)
         except ValueError:
-            raise ResponseError("status code must be a number")
+            raise HTTPError("status code must be a number")
         self.version = version
         self.code = code
         self.phrase = phrase
@@ -408,9 +410,6 @@ class HTTPDeflateDecoder(Parser):
                 return [data]
         return []
 
-class HTTPClientError(RuntimeError):
-    pass
-
 class HTTPClient(Protocol):
     """
     HTTP Client
@@ -448,7 +447,7 @@ class HTTPClient(Protocol):
     def makeRequest(self, request):
         try:
             if self.result is not None:
-                raise HTTPClientError, "Cannot make new requests while another one is pending"
+                raise HTTPError("Cannot make new requests while another one is pending")
         except:
             return fail(Failure())
         
@@ -575,7 +574,7 @@ class HTTPClient(Protocol):
                 decoders.append(HTTPDeflateDecoder())
             else:
                 # TODO: implement gzip?
-                raise HTTPClientError("Don't know how to decode Transfer-Encoding %r" % (encoding,))
+                raise HTTPError("Don't know how to decode Transfer-Encoding %r" % (encoding,))
         if not baseDecoderFound:
             decoders.insert(0, HTTPIdentityDecoder(contentLength))
             self.readingUntilClosed = contentLength is None
@@ -665,9 +664,6 @@ class HTTPAgentArgs(object):
         self.request = request
         return request
 
-class HTTPAgentError(RuntimeError):
-    pass
-
 class HTTPAgent(object):
     def __init__(self, reactor, contextFactory=None):
         self.reactor = reactor
@@ -736,7 +732,7 @@ class HTTPAgent(object):
     def makeRequest(self, url, method='GET', version=(1,1), headers=(), body=None, referer=None, proxy=None, proxyheaders=()):
         try:
             if self.result is not None:
-                raise HTTPAgentError, "Cannot make new requests while another one is pending"
+                raise HTTPError("Cannot make new requests while another one is pending")
         except:
             return fail(Failure())
         
