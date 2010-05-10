@@ -7,7 +7,6 @@ from twisted.internet.protocol import Protocol, ClientCreator
 from twisted.internet.defer import fail, Deferred
 
 __all__ = [
-    'HTTPError',
     'Headers',
     'Request',
     'Response',
@@ -20,7 +19,10 @@ def _canonicalHeaderName(name):
         return _canonicalHeaderParts.get(part) or part.capitalize()
     return '-'.join(canonical(part.lower()) for part in name.split('-'))
 
-class HTTPError(RuntimeError):
+class HTTPError(Exception):
+    pass
+
+class HTTPTimeout(HTTPError):
     pass
 
 HeadersBase = dict
@@ -444,6 +446,11 @@ class HTTPClient(Protocol):
         data, self.__buffer = self.__buffer, ''
         return data
     
+    def cancelRequest(self):
+        data = self.clearBuffer()
+        self.__reset()
+        self.__buffer = data
+    
     def makeRequest(self, request):
         try:
             if self.result is not None:
@@ -588,7 +595,7 @@ class HTTPClient(Protocol):
             self.__succeeded(self.response)
 
 class HTTPAgentArgs(object):
-    def __init__(self, url, method, version, headers, body, referer, proxy, proxyheaders):
+    def __init__(self, url, method, version, headers, body, referer, proxy, proxyheaders, proxytype):
         self.url = url
         self.method = method
         self.version = version
@@ -608,6 +615,7 @@ class HTTPAgentArgs(object):
                 proxy = (proxy[0], int(proxy[1]))
         self.proxy = proxy
         self.proxyheaders = proxyheaders
+        self.proxytype = proxytype
         
         # Split url into parts and determine host, port and target
         self.scheme, self.netloc, self.path, self.query, self.fragment = urlsplit(self.url)
@@ -643,13 +651,13 @@ class HTTPAgentArgs(object):
                 # Add referer unless moving away from https
                 request.headers['Referer'] = self.referer
         if self.proxy:
-            if self.scheme == 'https':
+            if self.scheme == 'https' or self.proxytype == 'https':
                 if not self.tunneling:
                     # We must use proxy to connect to netloc
                     request.method = 'CONNECT'
                     request.target = "%s:%d" % self.netloc_addr
-                    # Don't disclose request headers to https proxy
-                    request.headers = Headers()
+                    request.headers = Headers() # Don't disclose request headers to the proxy
+                    request.body = None # Don't send any body yet
                 # If we are using a tunnel we should make a regular request
             else:
                 # Use proxy to retrieve target url
@@ -665,28 +673,56 @@ class HTTPAgentArgs(object):
         return request
 
 class HTTPAgent(object):
+    result = None
+    args = None
+    client = None
+    timeout = 30
+    timeoutCall = None
+    redirectCount = 0
+    redirectLimit = 20
+    followRedirects = True
+    closeOnSuccess = True
+    closeOnFailure = True
+    
     def __init__(self, reactor, contextFactory=None):
         self.reactor = reactor
         self.contextFactory = contextFactory
-        self.args = None
+    
+    def close(self):
+        self.__reset(True)
+    
+    def __reset(self, close=False):
         self.result = None
-        self.client = None
+        if close:
+            self.args = None
+            self.__closeClient()
+        elif self.client is not None:
+            try:
+                self.client.cancelRequest()
+            except:
+                pass
+        self.__stopTimeout()
+        if self.redirectCount:
+            del self.redirectCount
     
     def __succeeded(self, response):
-        self.closeClient()
         result = self.result
-        self.result = None
+        self.__reset(self.closeOnSuccess)
         if result is not None:
             result.callback(response)
     
     def __failed(self, failure):
-        self.closeClient()
         result = self.result
-        self.result = None
+        self.__reset(self.closeOnFailure)
         if result is not None:
             result.errback(failure)
     
-    def closeClient(self):
+    def __timedOut(self, exc=None):
+        if exc is None:
+            exc = HTTPTimeout("Request timed out")
+        self.__failed(Failure(exc))
+    
+    def __closeClient(self):
         if self.client is not None:
             try:
                 self.client.transport.loseConnection()
@@ -694,7 +730,20 @@ class HTTPAgent(object):
                 pass
             self.client = None
     
+    def __stopTimeout(self):
+        if self.timeoutCall is not None:
+            try:
+                self.timeoutCall.cancel()
+            except:
+                pass
+            self.timeoutCall = None
+    
+    def __startTimeout(self, exc=None):
+        self.__stopTimeout()
+        self.timeoutCall = self.reactor.callLater(self.timeout, self.__timedOut, exc)
+    
     def __startRequest(self):
+        self.__startTimeout()
         r = self.client.makeRequest(self.args.makeRequest())
         r.addCallback(self.gotResponse).addErrback(self.__failed)
     
@@ -704,24 +753,24 @@ class HTTPAgent(object):
             self.contextFactory = ssl.ClientContextFactory()
         return self.contextFactory
     
-    def __makeRequest(self, url, method, version, headers, body, referer, proxy, proxyheaders):
+    def __makeRequest(self, url, method, version, headers, body, referer, proxy, proxyheaders, proxytype):
         assert self.result is not None
-        oldargs, newargs = self.args, HTTPAgentArgs(url=url, method=method, version=version, headers=headers, body=body, referer=referer, proxy=proxy, proxyheaders=proxyheaders)
+        oldargs, newargs = self.args, HTTPAgentArgs(url=url, method=method, version=version, headers=headers, body=body, referer=referer, proxy=proxy, proxyheaders=proxyheaders, proxytype=proxytype)
         self.args = newargs
         if self.client is not None:
             reuse = False
             if oldargs is not None and (oldargs.host, oldargs.port) == (newargs.host, newargs.port):
-                # don't reconnect, maybe we can reuse current client
+                # We are connecting to the same host, so maybe we can reuse the client
                 if oldargs.tunneling:
-                    # reuse only if netloc didn't change
+                    # Reuse only if netloc didn't change (otherwise it might be a different server)
                     reuse = newargs.netloc_addr == oldargs.netloc_addr
                 else:
                     reuse = True
                 if reuse:
                     newargs.tunneling = oldargs.tunneling
                     self.__startRequest()
-                    return self.result
-            self.closeClient()
+                    return
+            self.__closeClient()
         c = ClientCreator(self.reactor, HTTPClient)
         if newargs.scheme == 'https' and not newargs.proxy:
             d = c.connectSSL(newargs.host, newargs.port, contextFactory=self.getContextFactory())
@@ -729,7 +778,7 @@ class HTTPAgent(object):
             d = c.connectTCP(newargs.host, newargs.port)
         d.addCallback(self.gotProtocol).addErrback(self.__failed)
     
-    def makeRequest(self, url, method='GET', version=(1,1), headers=(), body=None, referer=None, proxy=None, proxyheaders=()):
+    def makeRequest(self, url, method='GET', version=(1,1), headers=(), body=None, referer=None, proxy=None, proxyheaders=(), proxytype='http'):
         try:
             if self.result is not None:
                 raise HTTPError("Cannot make new requests while another one is pending")
@@ -738,7 +787,7 @@ class HTTPAgent(object):
         
         self.result = result = Deferred()
         try:
-            self.__makeRequest(url=url, method=method, version=version, headers=headers, body=body, referer=referer, proxy=proxy, proxyheaders=proxyheaders)
+            self.__makeRequest(url=url, method=method, version=version, headers=headers, body=body, referer=referer, proxy=proxy, proxyheaders=proxyheaders, proxytype=proxytype)
         except:
             self.__failed(Failure())
         return result
@@ -748,6 +797,7 @@ class HTTPAgent(object):
         self.__startRequest()
     
     def gotResponse(self, response):
+        self.__stopTimeout()
         keepalive = response.version >= (1,1)
         if 'Connection' in response.headers:
             # Connection header(s) might override the default
@@ -761,22 +811,27 @@ class HTTPAgent(object):
                 keepalive = False
         if not keepalive:
             # Close connection if Keep-Alive is not supported
-            self.closeClient()
-        if response.code in (301, 302, 303, 307):
+            self.__closeClient()
+        if self.followRedirects and response.code in (301, 302, 303, 307):
             # Process redirects
+            self.redirectCount += 1
+            if self.redirectCount > self.redirectLimit:
+                self.__failed(HTTPError("Too many redirects"))
+                return
             url = response.headers.get('Location')
             if url and isinstance(url, list):
                 url = url[0]
             if url:
                 url = urljoin(self.args.url, url)
-                # TODO: don't allow too many redirects
-                self.__makeRequest(url=url, method=self.args.method, version=self.args.version, headers=self.args.headers, body=self.args.body, referer=self.args.url, proxy=self.args.proxy, proxyheaders=self.args.proxyheaders)
+                self.__makeRequest(url=url, method=self.args.method, version=self.args.version, headers=self.args.headers, body=self.args.body, referer=self.args.url, proxy=self.args.proxy, proxyheaders=self.args.proxyheaders, proxytype=self.args.proxytype)
                 return
         if response.code == 200 and self.args.request.method == 'CONNECT':
-            # Our https tunnel connected, make a real request
-            assert not self.client.clearBuffer(), "Server sent some data before we could start TLS"
-            self.client.transport.startTLS(self.getContextFactory())
-            self.client.transport.startWriting()
+            # Our tunnel has connected, now we can make a real request
+            if self.args.scheme == 'https':
+                # But for https we need to start TLS first
+                assert not self.client.clearBuffer(), "Server sent some data before we could start TLS"
+                self.client.transport.startTLS(self.getContextFactory())
+                self.client.transport.startWriting()
             self.args.tunneling = True
             self.__startRequest()
             return
