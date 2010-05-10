@@ -421,7 +421,6 @@ class HTTPClient(Protocol):
     
     def __reset(self):
         self.__buffer = ''
-        self.state = 'IDLE'
         self.result = None
         self.parser = None
         self.request = None
@@ -447,17 +446,22 @@ class HTTPClient(Protocol):
         return data
     
     def makeRequest(self, request):
-        if self.state != 'IDLE':
-            return fail(RuntimeError("HTTP Client must be idle to make new requests"))
+        try:
+            if self.result is not None:
+                raise HTTPClientError, "Cannot make new requests while another one is pending"
+        except:
+            return fail(Failure())
         
-        self.state = 'TRANSMITTING'
-        self.result = Deferred()
-        self.parser = HTTPResponseParser()
-        self.request = request
-        self.request.writeTo(self.transport)
-        if self.__buffer:
-            self.dataReceived(self.clearBuffer())
-        return self.result
+        self.result = result = Deferred()
+        try:
+            self.parser = HTTPResponseParser()
+            self.request = request
+            self.request.writeTo(self.transport)
+            if self.__buffer:
+                self.dataReceived(self.clearBuffer())
+        except:
+            self.__failed(Failure())
+        return result
     
     def decodeBody(self, data=''):
         if not self.decoders:
@@ -674,19 +678,24 @@ class HTTPAgent(object):
     
     def __succeeded(self, response):
         self.closeClient()
-        if self.result is not None:
-            self.result.callback(response)
-            self.result = None
+        result = self.result
+        self.result = None
+        if result is not None:
+            result.callback(response)
     
     def __failed(self, failure):
         self.closeClient()
-        if self.result is not None:
-            self.result.errback(failure)
-            self.result = None
+        result = self.result
+        self.result = None
+        if result is not None:
+            result.errback(failure)
     
     def closeClient(self):
         if self.client is not None:
-            self.client.transport.loseConnection()
+            try:
+                self.client.transport.loseConnection()
+            except:
+                pass
             self.client = None
     
     def __startRequest(self):
@@ -725,15 +734,18 @@ class HTTPAgent(object):
         d.addCallback(self.gotProtocol).addErrback(self.__failed)
     
     def makeRequest(self, url, method='GET', version=(1,1), headers=(), body=None, referer=None, proxy=None, proxyheaders=()):
-        if self.result is not None:
-            return fail(HTTPAgentError("Cannot make new requests while another one is pending"))
-        self.result = Deferred()
+        try:
+            if self.result is not None:
+                raise HTTPAgentError, "Cannot make new requests while another one is pending"
+        except:
+            return fail(Failure())
+        
+        self.result = result = Deferred()
         try:
             self.__makeRequest(url=url, method=method, version=version, headers=headers, body=body, referer=referer, proxy=proxy, proxyheaders=proxyheaders)
         except:
-            self.result = None
-            return fail()
-        return self.result
+            self.__failed(Failure())
+        return result
     
     def gotProtocol(self, protocol):
         self.client = protocol
