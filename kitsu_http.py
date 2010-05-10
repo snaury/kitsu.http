@@ -5,7 +5,7 @@ from urlparse import urlsplit, urljoin
 from zope.interface import implements
 from twisted.python.failure import Failure
 from twisted.internet.protocol import Protocol, ClientCreator
-from twisted.internet.defer import Deferred, maybeDeferred
+from twisted.internet.defer import fail, Deferred
 
 _canonicalHeaderParts = { 'www' : 'WWW' }
 def _canonicalHeaderName(name):
@@ -700,8 +700,7 @@ class HTTPAgent(object):
         return self.contextFactory
     
     def __makeRequest(self, url, method, version, headers, body, referer, proxy, proxyheaders):
-        if self.result is None:
-            self.result = Deferred()
+        assert self.result is not None
         oldargs, newargs = self.args, HTTPAgentArgs(url=url, method=method, version=version, headers=headers, body=body, referer=referer, proxy=proxy, proxyheaders=proxyheaders)
         self.args = newargs
         if self.client is not None:
@@ -724,12 +723,17 @@ class HTTPAgent(object):
         else:
             d = c.connectTCP(newargs.host, newargs.port)
         d.addCallback(self.gotProtocol).addErrback(self.__failed)
-        return self.result
     
     def makeRequest(self, url, method='GET', version=(1,1), headers=(), body=None, referer=None, proxy=None, proxyheaders=()):
         if self.result is not None:
-            raise HTTPAgentError, "Cannot make new requests while another one is pending"
-        return self.__makeRequest(url=url, method=method, version=version, headers=headers, body=body, referer=referer, proxy=proxy, proxyheaders=proxyheaders)
+            return fail(HTTPAgentError("Cannot make new requests while another one is pending"))
+        self.result = Deferred()
+        try:
+            self.__makeRequest(url=url, method=method, version=version, headers=headers, body=body, referer=referer, proxy=proxy, proxyheaders=proxyheaders)
+        except:
+            self.result = None
+            return fail()
+        return self.result
     
     def gotProtocol(self, protocol):
         self.client = protocol
