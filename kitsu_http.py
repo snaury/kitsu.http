@@ -762,6 +762,7 @@ class HTTPAgent(object):
                 return
         if response.code == 200 and self.args.request.method == 'CONNECT':
             # Our https tunnel connected, make a real request
+            assert not self.client.clearBuffer(), "Server sent some data before we could start TLS"
             self.client.transport.startTLS(self.getContextFactory())
             self.client.transport.startWriting()
             self.args.tunneling = True
