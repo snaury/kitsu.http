@@ -840,4 +840,5 @@ class HTTPAgent(object):
             self.args.tunneling = True
             self.__startRequest()
             return
+        response.url = self.args.url
         self.__succeeded(response)

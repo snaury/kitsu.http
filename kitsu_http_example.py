@@ -10,20 +10,19 @@ def main():
     agent = HTTPAgent(reactor)
     agent.timeout = 5
     agent.closeOnSuccess = False
-    agent.followRedirects = True
     urls = ['https://mail.google.com/mail', 'http://git.kitsu.ru', 'http://git.kitsu.ru/mine/kitsu-http.git']
     
     def gotResponse(response):
-        print "[%s] Got response:" % (datetime.today(),)
-        print "HTTP/%d.%d %d %s" % (response.version[0], response.version[1], response.code, response.phrase)
+        stamp = str(datetime.now().ctime())
+        print "[%s] Got response from %s" % (stamp, response.url)
+        print "[%s] HTTP/%d.%d %d %s" % (stamp, response.version[0], response.version[1], response.code, response.phrase)
         for name, values in response.headers.iteritems():
             if not isinstance(values, list):
                 values = [values]
             for value in values:
-                print "%s: %r" % (name, value)
-        print "<<<<<<<<"
-        print repr(response.body)
-        print ">>>>>>>> (%d bytes)" % len(response.body or '')
+                print "[%s] %s: %r" % (stamp, name, value)
+        if response.body:
+            print "[%s] (%d bytes)" % (stamp, len(response.body or ''))
         makeNextRequest()
     
     def gotError(failure):
