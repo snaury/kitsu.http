@@ -643,8 +643,8 @@ class HTTPAgentArgs(object):
     
     def makeRequest(self):
         request = Request(self.method, self.target, self.version, self.headers, self.body)
-        if self.body:
-            request.headers['Content-Length'] = "%d" % len(self.body)
+        if self.body or self.method != 'GET':
+            request.headers['Content-Length'] = "%d" % len(self.body or '')
         if self.referer:
             scheme, netloc, path, query, fragment = urlsplit(self.referer)
             if scheme != 'https' or self.scheme == scheme:
