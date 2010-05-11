@@ -5,7 +5,6 @@
 from twisted.internet.protocol import Protocol, ServerFactory, ClientCreator
 from twisted.protocols.basic import LineReceiver
 from twisted.internet import reactor
-from twisted.internet import ssl
 from kitsu_http import *
 
 class TunnelProtocol(Protocol):
