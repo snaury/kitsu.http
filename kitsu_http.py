@@ -429,6 +429,7 @@ class HTTPClient(Protocol):
         self.decoders = None
         self.readingChunked = False
         self.readingUntilClosed = False
+        self.bodySizeLimit = None
     
     def __succeeded(self, response):
         result = self.result
@@ -591,6 +592,8 @@ class HTTPClient(Protocol):
         if self.response.body is None:
             self.response.body = ''
         self.response.body += body
+        if self.bodySizeLimit is not None and len(self.response.body) > self.bodySizeLimit:
+            self.__failed(HTTPError("Response body size exceeded the limit"))
         if finished:
             self.__succeeded(self.response)
 
@@ -683,6 +686,7 @@ class HTTPAgent(object):
     followRedirects = True
     closeOnSuccess = True
     closeOnFailure = True
+    bodySizeLimit = None
     
     def __init__(self, reactor, contextFactory=None):
         self.reactor = reactor
@@ -744,6 +748,7 @@ class HTTPAgent(object):
     
     def __startRequest(self):
         self.__startTimeout()
+        self.client.bodySizeLimit = self.bodySizeLimit
         r = self.client.makeRequest(self.args.makeRequest())
         r.addCallback(self.gotResponse).addErrback(self.__failed)
     
