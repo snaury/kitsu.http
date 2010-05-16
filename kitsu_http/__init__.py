@@ -3,7 +3,7 @@
 
 from urlparse import urlsplit, urljoin
 from twisted.python.failure import Failure
-from twisted.internet.protocol import Protocol, ClientCreator
+from twisted.internet.protocol import Protocol, ClientFactory, ClientCreator
 from twisted.internet.defer import fail, Deferred
 
 __all__ = [
@@ -11,6 +11,7 @@ __all__ = [
     'Request',
     'Response',
     'Agent',
+    'TunnelCreator',
 ]
 
 _canonicalHeaderParts = { 'www' : 'WWW' }
@@ -847,3 +848,152 @@ class Agent(object):
             return
         response.url = self.args.url
         self.__succeeded(response)
+
+class TunnelProtocol(Protocol):
+    __buffer = ''
+    client = None
+    target = None
+    timeoutCall = None
+    disconnected = None
+    
+    def gotTimeout(self):
+        self.timeoutCall = None
+        self.__failed(HTTPTimeout("Tunnel connection timed out"))
+    
+    def startTimeout(self):
+        self.cancelTimeout()
+        self.timeoutCall = self.factory.reactor.callLater(self.factory.timeout, self.gotTimeout)
+    
+    def cancelTimeout(self):
+        if self.timeoutCall is not None:
+            self.timeoutCall.cancel()
+            self.timeoutCall = None
+    
+    def __succeeded(self, tunnel):
+        self.cancelTimeout()
+        self.client = None
+        self.factory.gotTunnel(self)
+    
+    def __failed(self, failure):
+        self.cancelTimeout()
+        self.client = None
+        self.transport.loseConnection()
+        self.factory.gotError(failure)
+    
+    def clearBuffer(self):
+        data, self.__buffer = self.__buffer, ''
+        return data
+    
+    def connectionMade(self):
+        self.startTimeout()
+        try:
+            netloc = '%s:%d' % (self.factory.host, self.factory.port)
+            request = Request(method='CONNECT', target=netloc, headers=self.factory.headers)
+            request.headers['Host'] = netloc
+            self.client = Client()
+            self.bodySizeLimit = 16*1024 # is 16k enough for an error message?
+            self.client.makeConnection(self.transport)
+            d = self.client.makeRequest(request)
+            d.addCallback(self.gotResponse)
+            d.addErrback(self.__failed)
+        except:
+            self.__failed(Failure())
+    
+    def connectionLost(self, failure):
+        if self.target is not None:
+            self.target.connectionLost(failure)
+        if self.client is not None:
+            self.client.connectionLost(failure)
+        self.disconnected = failure
+    
+    def dataReceived(self, data):
+        if self.target is not None:
+            self.target.dataReceived(data)
+            return
+        if self.client is not None:
+            self.client.dataReceived(data)
+            return
+        self.__buffer += data
+    
+    def gotResponse(self, response):
+        # Exceptions here will be caught by self.__failed
+        if response.code != 200:
+            raise HTTPError("Expected '200 Connection established', got '%d %s'" % (response.code, response.phrase))
+        self.__buffer += self.client.clearBuffer()
+        self.__succeeded(self)
+    
+    def startTunneling(self, target):
+        if self.factory.contextFactory is not None:
+            assert not self.__buffer, "Server sent some data before we could start TLS"
+            self.transport.startTLS(self.factory.contextFactory)
+            self.transport.startWriting()
+        self.target = target
+        self.target.makeConnection(self.transport)
+        if self.__buffer:
+            self.target.dataReceived(self.clearBuffer())
+        if self.disconnected is not None:
+            self.target.connectionLost(self.disconnected)
+
+class TunnelFactory(ClientFactory):
+    protocol = TunnelProtocol
+    
+    def __init__(self, reactor, protocolClass, args, kwargs, deferred, host, port, headers=(), contextFactory=None, timeout=30):
+        self.reactor = reactor
+        self.protocolClass = protocolClass
+        self.args = args
+        self.kwargs = kwargs
+        self.deferred = deferred
+        self.host = host
+        self.port = port
+        self.headers = headers
+        self.contextFactory = contextFactory
+        self.timeout = timeout
+    
+    def sendResult(self, result):
+        self.reactor.callLater(0, self.deferred.callback, result)
+        del self.deferred
+    
+    def sendError(self, failure):
+        self.reactor.callLater(0, self.deferred.errback, failure)
+        del self.deferred
+    
+    def clientConnectionFailed(self, connector, failure):
+        self.sendError(failure)
+    
+    def gotTunnel(self, tunnel):
+        try:
+            instance = self.protocolClass(*self.args, **self.kwargs)
+            tunnel.startTunneling(instance)
+            self.sendResult(instance)
+        except:
+            self.sendError(Failure())
+    
+    def gotError(self, failure):
+        self.sendError(failure)
+
+class TunnelCreator(object):
+    def __init__(self, reactor, proxy, protocolClass, *args, **kwargs):
+        self.reactor = reactor
+        self.proxyhost, self.proxyport = _parseProxy(proxy)
+        self.proxyheaders = kwargs.pop('proxyheaders', ())
+        self.protocolClass = protocolClass
+        self.args = args
+        self.kwargs = kwargs
+    
+    def connectTCP(self, host, port, timeout=30, bindAddress=None):
+        d = Deferred()
+        try:
+            f = TunnelFactory(self.reactor, self.protocolClass, self.args, self.kwargs, d, host, port, self.proxyheaders, timeout=timeout)
+            self.reactor.connectTCP(self.proxyhost, self.proxyport, f, timeout=timeout, bindAddress=bindAddress)
+        except:
+            d.errback(Failure())
+        return d
+    
+    def connectSSL(self, host, port, contextFactory, timeout=30, bindAddress=None):
+        d = Deferred()
+        try:
+            f = TunnelFactory(self.reactor, self.protocolClass, self.args, self.kwargs, d, host, port, self.proxyheaders, contextFactory, timeout=timeout)
+            self.reactor.connectTCP(self.proxyhost, self.proxyport, f, timeout=timeout, bindAddress=bindAddress)
+        except:
+            d.errback(Failure())
+        return d
