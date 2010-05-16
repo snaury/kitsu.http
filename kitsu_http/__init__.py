@@ -417,11 +417,12 @@ class HTTPClient(Protocol):
     HTTP Client
     """
     
+    __buffer = ''
+    
     def __init__(self):
         self.__reset()
     
     def __reset(self):
-        self.__buffer = ''
         self.result = None
         self.parser = None
         self.request = None
@@ -508,19 +509,21 @@ class HTTPClient(Protocol):
                     assert len(response) == 1
                     response = response[0]
                     assert self.parser.done
-                    data = self.parser.clear()
+                    self.__buffer = self.parser.clear()
                     self.parser = None
                     self.gotResponse(response)
+                    data = self.clearBuffer()
                 else:
                     data = ''
             if data and self.decoders:
                 body = self.decodeBody(data)
                 if self.decoders[0].done:
-                    data = self.decoders[0].clear()
+                    self.__buffer = self.decoders[0].clear()
                     self.gotBody(body, True)
+                    data = self.clearBuffer()
                 else:
-                    data = ''
                     self.gotBody(body)
+                    data = ''
             self.__buffer += data
         except:
             self.__failed(Failure())
