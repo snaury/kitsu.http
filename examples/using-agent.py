@@ -9,7 +9,7 @@ from twisted.internet import reactor
 from kitsu_http import *
 
 def main():
-    agent = HTTPAgent(reactor)
+    agent = Agent(reactor)
     agent.timeout = 5
     agent.closeOnSuccess = False
     urls = ['https://mail.google.com/mail', 'http://git.kitsu.ru', 'http://git.kitsu.ru/mine/kitsu-http.git']

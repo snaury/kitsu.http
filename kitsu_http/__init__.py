@@ -10,7 +10,7 @@ __all__ = [
     'Headers',
     'Request',
     'Response',
-    'HTTPAgent',
+    'Agent',
 ]
 
 _canonicalHeaderParts = { 'www' : 'WWW' }
@@ -315,7 +315,7 @@ class LineParser(Parser):
     def parseData(self, data):
         raise NotImplementedError
 
-class HTTPRequestParser(LineParser):
+class RequestParser(LineParser):
     """
     HTTP Request Parser
     """
@@ -329,7 +329,7 @@ class HTTPRequestParser(LineParser):
             return [self.request]
         return []
 
-class HTTPResponseParser(LineParser):
+class ResponseParser(LineParser):
     """
     HTTP Response Parser
     """
@@ -343,7 +343,7 @@ class HTTPResponseParser(LineParser):
             return [self.response]
         return []
 
-class HTTPChunkedDecoder(LineParser):
+class ChunkedDecoder(LineParser):
     def __init__(self):
         self.length = None
         self.extensions = None
@@ -383,7 +383,7 @@ class HTTPChunkedDecoder(LineParser):
             self.setLineMode(data)
         return [body]
 
-class HTTPIdentityDecoder(Parser):
+class IdentityDecoder(Parser):
     def __init__(self, length=None):
         self.length = length
     
@@ -403,7 +403,7 @@ class HTTPIdentityDecoder(Parser):
             return [body]
         return []
 
-class HTTPDeflateDecoder(Parser):
+class DeflateDecoder(Parser):
     def __init__(self):
         from zlib import decompressobj
         self.obj = decompressobj()
@@ -424,7 +424,7 @@ class HTTPDeflateDecoder(Parser):
                 return [data]
         return []
 
-class HTTPClient(Protocol):
+class Client(Protocol):
     """
     HTTP Client
     """
@@ -474,7 +474,7 @@ class HTTPClient(Protocol):
         
         self.result = result = Deferred()
         try:
-            self.parser = HTTPResponseParser()
+            self.parser = ResponseParser()
             self.request = request
             self.request.writeTo(self.transport)
             if self.__buffer:
@@ -498,7 +498,7 @@ class HTTPClient(Protocol):
             output = []
             for chunk in current:
                 output.extend(decoder.parse(chunk))
-            if output and isinstance(decoder, HTTPChunkedDecoder):
+            if output and isinstance(decoder, ChunkedDecoder):
                 # We might have trailer headers in the output
                 if isinstance(output[-1], Headers):
                     headers = output.pop()
@@ -587,19 +587,19 @@ class HTTPClient(Protocol):
             encoding = encoding.strip().lower()
             if encoding == 'chunked':
                 assert not decoders, "Transfer-Encoding 'chunked' must be the last in chain"
-                decoders.append(HTTPChunkedDecoder())
+                decoders.append(ChunkedDecoder())
                 self.readingChunked = True
                 baseDecoderFound = True
             elif encoding == 'identity':
                 assert not decoders, "Transfer-Encoding 'identity' must be the last in chain"
                 continue
             elif encoding == 'deflate':
-                decoders.append(HTTPDeflateDecoder())
+                decoders.append(DeflateDecoder())
             else:
                 # TODO: implement gzip?
                 raise HTTPError("Don't know how to decode Transfer-Encoding %r" % (encoding,))
         if not baseDecoderFound:
-            decoders.insert(0, HTTPIdentityDecoder(contentLength))
+            decoders.insert(0, IdentityDecoder(contentLength))
             self.readingUntilClosed = contentLength is None
         self.decoders = decoders
     
@@ -612,7 +612,7 @@ class HTTPClient(Protocol):
         if finished:
             self.__succeeded(self.response)
 
-class HTTPAgentArgs(object):
+class AgentArgs(object):
     def __init__(self, url, method, version, headers, body, referer, proxy, proxyheaders, proxytype):
         self.url = url
         self.method = method
@@ -680,7 +680,7 @@ class HTTPAgentArgs(object):
         self.request = request
         return request
 
-class HTTPAgent(object):
+class Agent(object):
     result = None
     args = None
     client = None
@@ -765,7 +765,7 @@ class HTTPAgent(object):
     
     def __makeRequest(self, url, method, version, headers, body, referer, proxy, proxyheaders, proxytype):
         assert self.result is not None
-        oldargs, newargs = self.args, HTTPAgentArgs(url=url, method=method, version=version, headers=headers, body=body, referer=referer, proxy=proxy, proxyheaders=proxyheaders, proxytype=proxytype)
+        oldargs, newargs = self.args, AgentArgs(url=url, method=method, version=version, headers=headers, body=body, referer=referer, proxy=proxy, proxyheaders=proxyheaders, proxytype=proxytype)
         self.args = newargs
         if self.client is not None:
             reuse = False
@@ -781,7 +781,7 @@ class HTTPAgent(object):
                     self.__startRequest()
                     return
             self.__closeClient()
-        c = ClientCreator(self.reactor, HTTPClient)
+        c = ClientCreator(self.reactor, Client)
         if newargs.scheme == 'https' and not newargs.proxy:
             d = c.connectSSL(newargs.host, newargs.port, contextFactory=self.getContextFactory())
         else:
