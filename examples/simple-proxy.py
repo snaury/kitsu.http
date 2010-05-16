@@ -2,6 +2,8 @@
 # Copyright (c) 2010 Alexey Borzenkov.
 # See LICENSE for details.
 
+import sys
+sys.path.append('..')
 from twisted.internet.protocol import Protocol, ServerFactory, ClientCreator
 from twisted.protocols.basic import LineReceiver
 from twisted.internet import reactor

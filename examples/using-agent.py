@@ -2,6 +2,8 @@
 # Copyright (c) 2010 Alexey Borzenkov.
 # See LICENSE for details.
 
+import sys
+sys.path.append('..')
 from datetime import datetime
 from twisted.internet import reactor
 from kitsu_http import *
