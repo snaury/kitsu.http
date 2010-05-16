@@ -19,6 +19,18 @@ def _canonicalHeaderName(name):
         return _canonicalHeaderParts.get(part) or part.capitalize()
     return '-'.join(canonical(part.lower()) for part in name.split('-'))
 
+def _parseProxy(proxy):
+    try:
+        if isinstance(proxy, basestring):
+            proxyhost, proxyport = proxy.split(':', 1)
+        else:
+            proxyhost, proxyport = proxy
+        if isinstance(proxyport, basestring):
+            proxyport = int(proxyport)
+    except ValueError:
+        raise HTTPError("proxy must be either in 'host:port' or (host, port) format")
+    return (proxyhost, proxyport)
+
 class HTTPError(Exception):
     pass
 
@@ -609,17 +621,7 @@ class HTTPAgentArgs(object):
         self.body = body
         self.referer = referer
         
-        # Convert proxy to (host, port)
-        if isinstance(proxy, basestring):
-            if proxy:
-                proxy = proxy.split(':', 1)
-            else:
-                proxy = None
-        if proxy:
-            assert len(proxy) == 2, "Proxy must be in host:port format"
-            if isinstance(proxy[1], basestring): # convert port to number
-                proxy = (proxy[0], int(proxy[1]))
-        self.proxy = proxy
+        self.proxy = _parseProxy(proxy)
         self.proxyheaders = proxyheaders
         self.proxytype = proxytype
         
