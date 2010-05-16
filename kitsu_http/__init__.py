@@ -468,7 +468,7 @@ class HTTPClient(Protocol):
     def makeRequest(self, request):
         try:
             if self.result is not None:
-                raise HTTPError("Cannot make new requests while another one is pending")
+                raise HTTPError("Cannot make new requests while another one in progress")
         except:
             return fail(Failure())
         
@@ -791,7 +791,7 @@ class HTTPAgent(object):
     def makeRequest(self, url, method='GET', version=(1,1), headers=(), body=None, referer=None, proxy=None, proxyheaders=(), proxytype='http'):
         try:
             if self.result is not None:
-                raise HTTPError("Cannot make new requests while another one is pending")
+                raise HTTPError("Cannot make new requests while another one in progress")
         except:
             return fail(Failure())
         
