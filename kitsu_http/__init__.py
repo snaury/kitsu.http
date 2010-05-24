@@ -21,6 +21,8 @@ def _canonicalHeaderName(name):
     return '-'.join(canonical(part.lower()) for part in name.split('-'))
 
 def _parseProxy(proxy):
+    if not proxy:
+        return proxy
     try:
         if isinstance(proxy, basestring):
             proxyhost, proxyport = proxy.split(':', 1)
