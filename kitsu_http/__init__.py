@@ -678,8 +678,8 @@ class AgentArgs(object):
                 for name, values in headers.iteritems():
                     # Should we really use Headers.add?
                     request.headers[name] = values
-        # Always specify the host we are connecting to
-        request.headers['Host'] = self.netloc
+        if 'Host' not in request.headers:
+            request.headers['Host'] = self.netloc
         self.request = request
         return request
 
