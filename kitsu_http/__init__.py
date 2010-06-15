@@ -893,7 +893,7 @@ class TunnelProtocol(Protocol):
             request = Request(method='CONNECT', target=netloc, headers=self.factory.headers)
             request.headers['Host'] = netloc
             self.client = Client()
-            self.bodySizeLimit = 16*1024 # is 16k enough for an error message?
+            self.client.bodySizeLimit = 16*1024 # is 16k enough for an error message?
             self.client.makeConnection(self.transport)
             d = self.client.makeRequest(request)
             d.addCallback(self.gotResponse)
