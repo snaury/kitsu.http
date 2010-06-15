@@ -951,13 +951,25 @@ class TunnelFactory(ClientFactory):
         self.contextFactory = contextFactory
         self.timeout = timeout
     
+    def __reset(self):
+        del self.reactor
+        del self.protocolClass
+        del self.args
+        del self.kwargs
+        del self.deferred
+        del self.host
+        del self.port
+        del self.headers
+        del self.contextFactory
+        del self.timeout
+    
     def sendResult(self, result):
         self.reactor.callLater(0, self.deferred.callback, result)
-        del self.deferred
+        self.__reset()
     
     def sendError(self, failure):
         self.reactor.callLater(0, self.deferred.errback, failure)
-        del self.deferred
+        self.__reset()
     
     def clientConnectionFailed(self, connector, failure):
         self.sendError(failure)
