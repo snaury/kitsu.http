@@ -904,9 +904,13 @@ class TunnelProtocol(Protocol):
     def connectionLost(self, failure):
         if self.target is not None:
             self.target.connectionLost(failure)
+            self.target = None
+        else:
+            self.disconnected = failure
+            self.disconnected.cleanFailure()
         if self.client is not None:
             self.client.connectionLost(failure)
-        self.disconnected = failure
+            self.client = None
     
     def dataReceived(self, data):
         if self.target is not None:
@@ -935,6 +939,8 @@ class TunnelProtocol(Protocol):
             self.target.dataReceived(self.clearBuffer())
         if self.disconnected is not None:
             self.target.connectionLost(self.disconnected)
+            self.disconnected = None
+            self.target = None
 
 class TunnelFactory(ClientFactory):
     protocol = TunnelProtocol
