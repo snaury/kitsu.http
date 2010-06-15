@@ -811,6 +811,16 @@ class Agent(object):
     
     def gotResponse(self, response):
         self.__stopTimeout()
+        if response.code == 200 and self.args.request.method == 'CONNECT':
+            # Our tunnel has connected, now we can make a real request
+            if self.args.scheme == 'https':
+                # But for https we need to start TLS first
+                assert not self.client.clearBuffer(), "Server sent some data before we could start TLS"
+                self.client.transport.startTLS(self.getContextFactory())
+                self.client.transport.startWriting()
+            self.args.tunneling = True
+            self.__startRequest()
+            return
         keepalive = response.version >= (1,1)
         if 'Connection' in response.headers:
             # Connection header(s) might override the default
@@ -838,16 +848,6 @@ class Agent(object):
                 url = urljoin(self.args.url, url)
                 self.__makeRequest(url=url, method=self.args.method, version=self.args.version, headers=self.args.headers, body=self.args.body, referer=self.args.url, proxy=self.args.proxy, proxyheaders=self.args.proxyheaders, proxytype=self.args.proxytype)
                 return
-        if response.code == 200 and self.args.request.method == 'CONNECT':
-            # Our tunnel has connected, now we can make a real request
-            if self.args.scheme == 'https':
-                # But for https we need to start TLS first
-                assert not self.client.clearBuffer(), "Server sent some data before we could start TLS"
-                self.client.transport.startTLS(self.getContextFactory())
-                self.client.transport.startWriting()
-            self.args.tunneling = True
-            self.__startRequest()
-            return
         response.url = self.args.url
         self.__succeeded(response)
 
