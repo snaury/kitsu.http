@@ -21,7 +21,16 @@ class Client(object):
         self.close()
     
     def close(self):
-        self.sock.close()
+        if self.sock is not None:
+            self.sock.close()
+    
+    def detach(self):
+        sock, self.sock = self.sock, None
+        return sock
+    
+    def clear(self):
+        data, self.data = self.data, ''
+        return data
     
     def __recv(self):
         data = self.sock.recv(self.packetsize)
