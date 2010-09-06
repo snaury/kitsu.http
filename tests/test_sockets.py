@@ -3,6 +3,7 @@ import time
 import socket
 import select
 import threading
+import Queue
 from kitsu.http.errors import *
 from kitsu.http.request import *
 from kitsu.http.response import *
@@ -16,21 +17,20 @@ class Server(threading.Thread):
         self.sock.bind((host, port))
         self.sock.listen(1)
         self.host, self.port = self.sock.getsockname()
-        self.daemon = True
-        self.responses = []
+        self.responses = Queue.Queue()
         self.deadsockets = []
     
     def enqueue(self, response, autoclose=False):
-        self.responses.append((response, autoclose))
+        self.responses.put((response, autoclose))
     
     def run(self):
         try:
-            while self.sock is not None:
-                try:
-                    sock, addr = self.sock.accept()
-                except:
-                    return
-                autoclose = True
+            while True:
+                item = self.responses.get()
+                if item is None:
+                    break
+                response, autoclose = item
+                sock, addr = self.sock.accept()
                 try:
                     parser = RequestParser()
                     while True:
@@ -42,8 +42,6 @@ class Server(threading.Thread):
                             assert len(request) == 1
                             request = request[0]
                             break
-                    assert self.responses, "no response in server thread, likely a bug"
-                    response, autoclose = self.responses.pop(0)
                     #print "%s %s -> %d %s%s" % (request.method, request.target, response.code, response.phrase, response.body and " (%d bytes)" % len(response.body) or "")
                     sock.sendall(response.toString())
                     if response.body:
@@ -55,12 +53,11 @@ class Server(threading.Thread):
                         self.deadsockets.append(sock)
                     sock = None
         finally:
-            self.stop()
+            self.sock.close()
+            self.sock = None
     
     def stop(self):
-        sock, self.sock = self.sock, None
-        if sock is not None:
-            sock.close()
+        self.responses.put(None)
 
 NORMAL_BODY = "Hello world"
 CHUNKED_BODY = ("""\
@@ -94,6 +91,7 @@ class ClientTests(unittest.TestCase):
     
     def tearDown(self):
         self.server.stop()
+        self.server.join()
         self.server = None
     
     def request(self, response, request=None, autoclose=False, timeout=5, bodylimit=None):
