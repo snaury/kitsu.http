@@ -3,10 +3,10 @@ import time
 import socket
 import select
 import threading
-from kitsu.http.agent import *
 from kitsu.http.errors import *
 from kitsu.http.request import *
 from kitsu.http.response import *
+from kitsu.http.sockets import *
 
 class Server(threading.Thread):
     def __init__(self, host='127.0.0.1', port=0):
