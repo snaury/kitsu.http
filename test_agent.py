@@ -68,19 +68,19 @@ def test_response(response, method='GET', target='/', autoclose=False, timeout=5
     finally:
         assert time.time() - start < timeout, "request took too long, likely a bug"
 
-def test_http_error(response, text, **kwargs):
+def test_http_error(response, cls, **kwargs):
     try:
         test_response(response, **kwargs)
-    except Exception, e:
-        assert isinstance(e, HTTPError) and str(e) == text, "expected HTTPError(%r), got %r" % (text, e)
+    except cls, e:
+        print "    %s(%r)" % (type(e).__name__, str(e))
     else:
-        assert False, "expected HTTPError(%r)" % (text,)
+        assert False, "expected %s" % (cls.__name__,)
 
 def test_not_enough_data(response, autoclose=True):
-    test_http_error(response, 'not enough data', autoclose=autoclose)
+    test_http_error(response, HTTPDataError, autoclose=autoclose)
 
 def test_too_much_data(response, bodylimit=None):
-    test_http_error(response, 'too much data', bodylimit=bodylimit)
+    test_http_error(response, HTTPLimitError, bodylimit=bodylimit)
 
 # Test normal body
 normal_body = "Hello world"

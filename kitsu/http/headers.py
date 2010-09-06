@@ -268,11 +268,11 @@ class Headers(object):
             self.__partialHeader = None
             parts = header.split(':', 1)
             if len(parts) != 2:
-                raise HTTPError("header must be in 'name: value' format")
+                raise HTTPDataError("header must be in 'name: value' format")
             name = parts[0].rstrip()
             value = parts[1].strip()
             if not name:
-                raise HTTPError("header must be in 'name: value' format")
+                raise HTTPDataError("header must be in 'name: value' format")
             self.add(name, value)
     
     def parseLine(self, line):

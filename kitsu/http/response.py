@@ -32,23 +32,23 @@ class Response(object):
     def __parseStatus(self, line):
         parts = line.split(None, 2)
         if len(parts) not in (2, 3):
-            raise HTTPError("response must be in 'HTTP/n.n status message' format")
+            raise HTTPDataError("response must be in 'HTTP/n.n status message' format")
         version = parts[0]
         code = parts[1]
         phrase = len(parts) >= 3 and parts[2] or ""
         if not version.startswith('HTTP/'):
-            raise HTTPError("protocol must be HTTP")
+            raise HTTPDataError("protocol must be HTTP")
         version = version[5:].split('.')
         if len(version) != 2:
-            raise HTTPError("invalid version")
+            raise HTTPDataError("invalid version")
         try:
             version = (int(version[0]), int(version[1]))
         except ValueError:
-            raise HTTPError("invalid version")
+            raise HTTPDataError("invalid version")
         try:
             code = int(code)
         except ValueError:
-            raise HTTPError("status code must be a number")
+            raise HTTPDataError("status code must be a number")
         self.version = version
         self.code = code
         self.phrase = phrase

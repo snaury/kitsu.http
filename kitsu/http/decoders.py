@@ -33,7 +33,7 @@ class IdentityDecoder(Parser):
         if not self.done:
             self.done = True
             if self.length:
-                raise HTTPError("not enough data")
+                raise HTTPDataError("not enough data for content body")
         return ()
 
 class ChunkedDecoder(LineParser):
@@ -51,7 +51,7 @@ class ChunkedDecoder(LineParser):
         elif self.length == 0:
             # Just finished reading chunk
             if line:
-                raise HTTPError("chunk data must end with '\\r\\n'")
+                raise HTTPDataError("chunk data must end with '\\r\\n'")
             self.length = None
         else:
             # Reading chunk header
@@ -81,7 +81,7 @@ class ChunkedDecoder(LineParser):
     def finish(self):
         if not self.done:
             self.done = True
-            raise HTTPError("not enough data")
+            raise HTTPDataError("not enough data for chunked body")
         return ()
 
 class DeflateDecoder(Parser):
@@ -174,19 +174,19 @@ class CompoundDecoder(Parser):
             encoding = encoding.strip().lower()
             if encoding == 'chunked':
                 if decoders:
-                    raise HTTPError("Transfer-Encoding 'chunked' must be the last in chain")
+                    raise HTTPDataError("'chunked' must be the last Transfer-Encoding in chain")
                 decoders.append(ChunkedDecoder())
                 baseDecoderFound = True
             elif encoding == 'identity':
                 if decoders:
-                    raise HTTPError("Transfer-Encoding 'identity' must be the last in chain")
+                    raise HTTPDataError("'identity' must be the last Transfer-Encoding in chain")
                 decoders.append(IdentityDecoder(contentLength))
                 baseDecoderFound = True
             elif encoding == 'deflate':
                 decoders.append(DeflateDecoder())
             else:
                 # TODO: implement gzip, bzip2?
-                raise HTTPError("Don't know how to decode Transfer-Encoding %r" % (encoding,))
+                raise HTTPDataError("no decoder for Transfer-Encoding %r" % (encoding,))
         if not baseDecoderFound:
             # Don't fail if identity not specified
             decoders.insert(0, IdentityDecoder(contentLength))

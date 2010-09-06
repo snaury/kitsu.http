@@ -55,7 +55,7 @@ class Client(object):
             self.data = self.__recv()
         while True:
             if not self.data:
-                raise HTTPError("not enough data")
+                raise HTTPDataError("not enough data for response")
             response = parser.parse(self.data)
             if response:
                 self.data = parser.clear()
@@ -76,7 +76,7 @@ class Client(object):
             else:
                 response.body.write(chunk)
                 if self.bodylimit is not None and response.body.tell() > self.bodylimit:
-                    raise HTTPError("too much data")
+                    raise HTTPLimitError()
         def process_chunks(chunks):
             for chunk in chunks:
                 process_chunk(chunk)

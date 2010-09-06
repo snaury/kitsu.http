@@ -32,17 +32,17 @@ class Request(object):
     def __parseCommand(self, line):
         parts = line.split(None, 2)
         if len(parts) != 3:
-            raise HTTPError("request must be in 'METHOD target HTTP/n.n' format")
+            raise HTTPDataError("request must be in 'METHOD target HTTP/n.n' format")
         method, target, version = parts
         if not version.startswith('HTTP/'):
-            raise HTTPError("protocol must be HTTP")
+            raise HTTPDataError("protocol must be HTTP")
         version = version[5:].split('.')
         if len(version) != 2:
-            raise HTTPError("invalid version")
+            raise HTTPDataError("invalid version")
         try:
             version = (int(version[0]), int(version[1]))
         except ValueError:
-            raise HTTPError("invalid version")
+            raise HTTPDataError("invalid version")
         self.method = method
         self.target = target
         self.version = version
