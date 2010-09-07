@@ -94,14 +94,14 @@ class ClientTests(unittest.TestCase):
         self.server.join()
         self.server = None
     
-    def request(self, response, request=None, autoclose=False, timeout=5, bodylimit=None):
+    def request(self, response, request=None, autoclose=False, timeout=5, sizelimit=None, bodylimit=None):
         sock = socket.socket()
         sock.settimeout(timeout * 2)
         self.server.enqueue(response, autoclose=autoclose)
         sock.connect((self.server.host, self.server.port))
         start = time.time()
         try:
-            return Client(sock, bodylimit=bodylimit).makeRequest(request or Request())
+            return Client(sock, sizelimit=sizelimit, bodylimit=bodylimit).makeRequest(request or Request())
         finally:
             self.assertTrue(time.time() - start < timeout, "request took too long")
     
@@ -143,10 +143,13 @@ class ClientTests(unittest.TestCase):
             make_response(CHUNKED_BODY[:-1], chunked=True),
             autoclose=True)
     
-    def test_bodylimit(self):
+    def test_limits(self):
+        res = make_response(NORMAL_BODY)
         # Shouldn't raise on exact limit match
-        response = self.request(make_response(NORMAL_BODY), bodylimit=len(NORMAL_BODY))
+        response = self.request(res, bodylimit=len(NORMAL_BODY))
+        response = self.request(res, sizelimit=len(res.toString()) + len(NORMAL_BODY))
         # Should raise when bigger than limit
         self.assertRaises(HTTPLimitError, self.request,
-            make_response(NORMAL_BODY),
-            bodylimit=len(NORMAL_BODY)-1)
+            res, bodylimit=len(NORMAL_BODY) - 1)
+        self.assertRaises(HTTPLimitError, self.request,
+            res, sizelimit=len(res.toString()) + len(NORMAL_BODY) - 1)

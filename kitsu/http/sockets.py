@@ -11,9 +11,10 @@ except ImportError:
 __all__ = ['Client', 'Agent']
 
 class Client(object):
-    def __init__(self, sock, bodylimit=None, packetsize=4096):
+    def __init__(self, sock, sizelimit=None, bodylimit=None, packetsize=4096):
         self.sock = sock
         self.data = ''
+        self.sizelimit = sizelimit
         self.bodylimit = bodylimit
         self.packetsize = packetsize
     
@@ -57,6 +58,7 @@ class Client(object):
             self.__send(data)
     
     def makeRequest(self, request):
+        size = 0
         self.__send(request.toString())
         self.__sendBody(request.body)
         parser = ResponseParser()
@@ -66,12 +68,18 @@ class Client(object):
             if not self.data:
                 raise HTTPDataError("not enough data for response")
             response = parser.parse(self.data)
+            size += len(self.data)
             if response:
                 self.data = parser.clear()
+                size -= len(self.data)
+                if self.sizelimit is not None and size > self.sizelimit:
+                    raise HTTPLimitError()
                 assert parser.done
                 assert len(response) == 1
                 response = response[0]
                 break
+            if self.sizelimit is not None and size > self.sizelimit:
+                raise HTTPLimitError()
             self.data = self.__recv()
         decoder = CompoundDecoder.from_response(request.method, response)
         if not decoder:
@@ -95,11 +103,17 @@ class Client(object):
             if not self.data:
                 break
             process_chunks(decoder.parse(self.data))
+            size += len(self.data)
             if decoder.done:
                 break
+            if self.sizelimit is not None and size > self.sizelimit:
+                raise HTTPLimitError()
             self.data = self.__recv()
         process_chunks(decoder.finish())
         self.data = decoder.clear()
+        size -= len(self.data)
+        if self.sizelimit is not None and size > self.sizelimit:
+            raise HTTPLimitError()
         response.body = response.body.getvalue()
         return response
 
