@@ -1,5 +1,6 @@
 __all__ = ['Request', 'RequestParser']
 
+import re
 from kitsu.http.errors import *
 from kitsu.http.headers import Headers
 from kitsu.http.parsers import LineParser
@@ -18,7 +19,11 @@ class Request(object):
     def toLines(self, lines=None):
         if lines is None:
             lines = []
-        lines.append("%s %s HTTP/%d.%d\r\n" % (self.method, self.target, self.version[0], self.version[1]))
+        target = self.target
+        target = re.sub(r"\s", "+", target)
+        if isinstance(target, unicode):
+            target = target.encode('utf-8')
+        lines.append("%s %s HTTP/%d.%d\r\n" % (self.method, target, self.version[0], self.version[1]))
         self.headers.toLines(lines)
         lines.append("\r\n")
         return lines
