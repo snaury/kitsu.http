@@ -144,12 +144,28 @@ class ClientTests(unittest.TestCase):
             autoclose=True)
     
     def test_limits(self):
-        res = make_response(NORMAL_BODY)
-        # Shouldn't raise on exact limit match
-        response = self.request(res, bodylimit=len(NORMAL_BODY))
-        response = self.request(res, sizelimit=len(res.toString()) + len(NORMAL_BODY))
-        # Should raise when bigger than limit
+        # Test size limit: no content-length, no content body
+        res = Response()
+        response = self.request(res, sizelimit=len(res.toString()), autoclose=True)
         self.assertRaises(HTTPLimitError, self.request,
-            res, bodylimit=len(NORMAL_BODY) - 1)
+            res, sizelimit=len(res.toString()) - 1)
+        # Test size limit: no content-length, with content body
+        res = Response(body=NORMAL_BODY)
+        response = self.request(res, sizelimit=len(res.toString()) + len(NORMAL_BODY), autoclose=True)
         self.assertRaises(HTTPLimitError, self.request,
             res, sizelimit=len(res.toString()) + len(NORMAL_BODY) - 1)
+        # Test size limit: with content-length, no content body
+        res = make_response('')
+        response = self.request(res, sizelimit=len(res.toString()))
+        self.assertRaises(HTTPLimitError, self.request,
+            res, sizelimit=len(res.toString()) - 1)
+        # Test size limit: with content-length, with content body
+        res = make_response(NORMAL_BODY)
+        response = self.request(res, sizelimit=len(res.toString()) + len(NORMAL_BODY))
+        self.assertRaises(HTTPLimitError, self.request,
+            res, sizelimit=len(res.toString()) + len(NORMAL_BODY) - 1)
+        # Test body limits with Content-Length
+        res = make_response(NORMAL_BODY)
+        response = self.request(res, bodylimit=len(NORMAL_BODY))
+        self.assertRaises(HTTPLimitError, self.request,
+            res, bodylimit=len(NORMAL_BODY) - 1)

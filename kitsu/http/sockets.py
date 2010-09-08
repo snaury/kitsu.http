@@ -58,7 +58,7 @@ class Client(object):
             self.__send(data)
     
     def makeRequest(self, request):
-        size = 0
+        sizelimit = self.sizelimit
         self.__send(request.toString())
         self.__sendBody(request.body)
         parser = ResponseParser()
@@ -68,17 +68,19 @@ class Client(object):
             if not self.data:
                 raise HTTPDataError("not enough data for response")
             response = parser.parse(self.data)
-            size += len(self.data)
+            if sizelimit is not None:
+                sizelimit -= len(self.data)
             if response:
                 self.data = parser.clear()
-                size -= len(self.data)
-                if self.sizelimit is not None and size > self.sizelimit:
-                    raise HTTPLimitError()
+                if sizelimit is not None:
+                    sizelimit += len(self.data)
+                    if sizelimit < 0:
+                        raise HTTPLimitError()
                 assert parser.done
                 assert len(response) == 1
                 response = response[0]
                 break
-            if self.sizelimit is not None and size > self.sizelimit:
+            if sizelimit is not None and sizelimit <= 0:
                 raise HTTPLimitError()
             self.data = self.__recv()
         decoder = CompoundDecoder.from_response(request.method, response)
@@ -103,17 +105,19 @@ class Client(object):
             if not self.data:
                 break
             process_chunks(decoder.parse(self.data))
-            size += len(self.data)
+            if sizelimit is not None:
+                sizelimit -= len(self.data)
             if decoder.done:
                 break
-            if self.sizelimit is not None and size > self.sizelimit:
+            if sizelimit is not None and sizelimit < 0:
                 raise HTTPLimitError()
             self.data = self.__recv()
         process_chunks(decoder.finish())
         self.data = decoder.clear()
-        size -= len(self.data)
-        if self.sizelimit is not None and size > self.sizelimit:
-            raise HTTPLimitError()
+        if sizelimit is not None:
+            sizelimit += len(self.data)
+            if sizelimit < 0:
+                raise HTTPLimitError()
         response.body = response.body.getvalue()
         return response
 
