@@ -209,12 +209,22 @@ def _default_create_connection(address, timeout=None):
     sock.connect(address)
     return sock
 
-def _default_wrap_ssl(sock, *args, **kwargs):
+def _default_wrap_ssl(sock, keyfile=None, certfile=None, **kwargs):
     try:
         from ssl import wrap_socket
     except ImportError:
-        from socket import ssl as wrap_socket
-    return wrap_socket(sock, *args, **kwargs)
+        import socket
+        return socket.ssl(sock, keyfile, certfile)
+    # Work around http://bugs.python.org/issue5103 on Python 2.6
+    sslsock = wrap_socket(sock, keyfile, certfile, do_handshake_on_connect=False, **kwargs)
+    # Work around bug in gevent.ssl, timeout in SSLObject is not inherited
+    sslsock.settimeout(sock.gettimeout())
+    try:
+        sslsock.getpeername()
+    except:
+        return sslsock # not connected
+    sslsock.do_handshake()
+    return sslsock
 
 def _parse_netloc(netloc, default_port=None):
     index = netloc.find(':')
@@ -322,7 +332,7 @@ class Agent(object):
                 sock = HTTPSProxyClient(sock, proxyheaders)
                 sock.connect(_parse_netloc(tnetloc, tscheme == 'https' and 443 or 80))
             if scheme == 'https':
-                sock = self.__wrap_ssl(sock, keyfile=keyfile, certfile=certfile)
+                sock = self.__wrap_ssl(sock, keyfile, certfile)
             client = self.__current_client = Client(sock, sizelimit=self.sizelimit, bodylimit=self.bodylimit)
             self.__current_address = address
         else:
