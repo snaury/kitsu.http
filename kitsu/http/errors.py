@@ -1,4 +1,4 @@
-__all__ = ['HTTPError', 'HTTPDataError', 'HTTPLimitError', 'HTTPTimeoutError']
+__all__ = ['HTTPError', 'HTTPDNSError', 'HTTPDataError', 'HTTPLimitError', 'HTTPTimeoutError']
 
 class HTTPError(Exception):
     def __str__(self):
@@ -8,6 +8,9 @@ class HTTPError(Exception):
         if doc and text:
             return "%s: %s" % (doc, text)
         return doc or text
+
+class HTTPDNSError(HTTPError):
+    """Name resolution failed"""
 
 class HTTPDataError(HTTPError):
     """Data error"""
