@@ -187,21 +187,21 @@ class HTTPSProxyClient(object):
     def connect_ex(self, *args, **kwargs):
         raise NotImplemented
 
-def _default_gethostbyname(hostname):
+def gethostbyname(hostname):
     import socket
     try:
         return socket.gethostbyname(hostname)
     except socket.error, e:
         raise HTTPDNSError("%r: %s" % (hostname, e))
 
-def _default_gethostbyaddr(ipaddr):
+def gethostbyaddr(ipaddr):
     import socket
     try:
         return socket.gethostbyaddr(ipaddr)
     except socket.error, e:
         raise HTTPDNSError("%r: %s" % (hostname, e))
 
-def _default_create_connection(address, timeout=None):
+def create_connection(address, timeout=None):
     import socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
     if timeout is not None:
@@ -209,7 +209,7 @@ def _default_create_connection(address, timeout=None):
     sock.connect(address)
     return sock
 
-def _default_wrap_ssl(sock, keyfile=None, certfile=None, **kwargs):
+def wrap_ssl(sock, keyfile=None, certfile=None, **kwargs):
     try:
         from ssl import wrap_socket
     except ImportError:
@@ -273,7 +273,7 @@ def _make_uri(scheme, auth, netloc, path='', fragment=''):
     return uri
 
 class Agent(object):
-    def __init__(self, proxy=None, headers=(), timeout=30, keepalive=False, sizelimit=None, bodylimit=None, redirectlimit=20, gethostbyname=_default_gethostbyname, gethostbyaddr=_default_gethostbyaddr, create_connection=_default_create_connection, wrap_ssl=_default_wrap_ssl):
+    def __init__(self, proxy=None, headers=(), timeout=30, keepalive=False, sizelimit=None, bodylimit=None, redirectlimit=20):
         self.proxy = proxy
         self.headers = Headers(headers)
         self.timeout = timeout
@@ -281,12 +281,12 @@ class Agent(object):
         self.sizelimit = sizelimit
         self.bodylimit = bodylimit
         self.redirectlimit = redirectlimit
-        self.__gethostbyname = gethostbyname
-        self.__gethostbyaddr = gethostbyaddr
-        self.__create_connection = create_connection
-        self.__wrap_ssl = wrap_ssl
         self.__current_address = None
         self.__current_client = None
+        self.gethostbyname = gethostbyname
+        self.gethostbyaddr = gethostbyaddr
+        self.create_connection = create_connection
+        self.wrap_ssl = wrap_ssl
     
     def close(self):
         self.__current_address = None
@@ -326,13 +326,13 @@ class Agent(object):
             self.close()
         if self.__current_client is None:
             tscheme, tnetloc = address[0]
-            sock = self.__create_connection(_parse_netloc(tnetloc, tscheme == 'https' and 443 or 80), self.timeout)
+            sock = self.create_connection(_parse_netloc(tnetloc, tscheme == 'https' and 443 or 80), self.timeout)
             if self.proxy and 'https' in (scheme, proxytype):
                 tscheme, tnetloc = address[1]
                 sock = HTTPSProxyClient(sock, proxyheaders)
                 sock.connect(_parse_netloc(tnetloc, tscheme == 'https' and 443 or 80))
             if scheme == 'https':
-                sock = self.__wrap_ssl(sock, keyfile, certfile)
+                sock = self.wrap_ssl(sock, keyfile, certfile)
             client = self.__current_client = Client(sock, sizelimit=self.sizelimit, bodylimit=self.bodylimit)
             self.__current_address = address
         else:
