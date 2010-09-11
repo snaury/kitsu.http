@@ -139,7 +139,9 @@ class Headers(object):
     
     def __setitem__(self, name, value):
         self.__remove(name)
-        if isinstance(value, basestring):
+        if value is None:
+            return
+        elif isinstance(value, basestring):
             self.__append(name, value)
         else:
             for value in value:
@@ -208,15 +210,21 @@ class Headers(object):
     def setdefault(self, name, value):
         if self.__make_key(name) not in self.__values:
             self[name] = value
+            if value is None:
+                return None
         return ', '.join(self.getlist(name))
     
     def setdefaultlist(self, name, value):
         if self.__make_key(name) not in self.__values:
             self[name] = value
+            if value is None:
+                return None
         return self.getlist(name)
     
     def add(self, name, value):
-        if isinstance(value, basestring):
+        if value is None:
+            return
+        elif isinstance(value, basestring):
             self.__append(name, value)
         else:
             for value in value:
@@ -235,7 +243,9 @@ class Headers(object):
                 if not merge:
                     self.__remove(name)
                 seen.add(key)
-            if isinstance(value, basestring):
+            if value is None:
+                continue
+            elif isinstance(value, basestring):
                 self.__append(name, value)
             else:
                 for value in value:
