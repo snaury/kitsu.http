@@ -339,7 +339,11 @@ class Agent(object):
             client = self.__current_client
             client.sizelimit = self.sizelimit
             client.bodylimit = self.bodylimit
-        return client.makeRequest(request)
+        try:
+            return client.makeRequest(request)
+        except:
+            self.close()
+            raise
     
     def makeRequest(self, url, **kwargs):
         url = url.strip()
