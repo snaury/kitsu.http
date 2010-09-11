@@ -273,7 +273,7 @@ def _make_uri(scheme, auth, netloc, path='', fragment=''):
     return uri
 
 class Agent(object):
-    def __init__(self, proxy=None, headers=(), timeout=30, keepalive=False, sizelimit=None, bodylimit=None, redirectlimit=20):
+    def __init__(self, proxy=None, headers=(), timeout=30, keepalive=None, sizelimit=None, bodylimit=None, redirectlimit=20):
         self.proxy = proxy
         self.headers = Headers(headers)
         self.timeout = timeout
@@ -307,6 +307,8 @@ class Agent(object):
             request.headers['Host'] = netloc
         if referer:
             request.headers['Referer'] = referer
+        if self.keepalive is not None:
+            request.headers['Connection'] = self.keepalive and 'keep-alive' or 'close'
         if self.proxy:
             proxytype, proxyauth, proxynetloc, proxypath, proxyfragment = _parseProxy(self.proxy)
             proxytype = proxytype.lower()
@@ -316,10 +318,12 @@ class Agent(object):
             if proxyauth:
                 proxyauth = re.sub(r"\s", "", base64.encodestring(proxyauth))
                 proxyheaders['Proxy-Authorization'] = 'Basic %s' % proxyauth
-            address = ((proxyscheme, proxynetloc), (scheme, netloc))
-            if 'https' not in (scheme, proxytype):
+            if 'https' in (scheme, proxytype):
+                address = ((proxyscheme, proxynetloc), (scheme, netloc))
+            else:
                 request.target = url
                 request.headers.update(proxyheaders)
+                address = ((proxyscheme, proxynetloc),)
         else:
             address = ((scheme, netloc),)
         if self.__current_address != address:
@@ -340,10 +344,21 @@ class Agent(object):
             client.sizelimit = self.sizelimit
             client.bodylimit = self.bodylimit
         try:
-            return client.makeRequest(request)
+            response = client.makeRequest(request)
         except:
             self.close()
             raise
+        keepalive = response.version >= (1, 1)
+        connection = response.headers.get('Connection')
+        if connection:
+            connection = [value.strip().lower() for value in connection.split(',')]
+            if 'keep-alive' in connection:
+                keepalive = True
+            if 'close' in connection:
+                keepalive = False
+        if not keepalive or (not self.keepalive and self.keepalive is not None):
+            self.close()
+        return response
     
     def makeRequest(self, url, **kwargs):
         url = url.strip()
