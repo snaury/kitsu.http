@@ -363,4 +363,16 @@ class Agent(object):
     
     def makeRequest(self, url, **kwargs):
         url = url.strip()
-        return self.__makeRequest(url, **kwargs)
+        redirectlimit = self.redirectlimit
+        while True:
+            response = self.__makeRequest(url, **kwargs)
+            if response.code in (301, 302, 303, 307) and redirectlimit > 0:
+                redirectlimit -= 1
+                location = response.headers.getlist('Location')
+                if location:
+                    location = location[0].strip()
+                if location:
+                    url = urlparse.urljoin(url, location)
+                    continue
+            break
+        return response
