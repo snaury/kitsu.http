@@ -299,7 +299,8 @@ class Agent(object):
         scheme = scheme.lower()
         if scheme not in ('http', 'https'):
             raise HTTPError("Unsupported scheme %r: %s" % (scheme, url))
-        request = Request(method=method, target=path or '/', version=version, headers=headers, body=body)
+        request = Request(method=method, target=path or '/', version=version, headers=self.headers, body=body)
+        request.headers.update(headers)
         if auth:
             auth = re.sub(r"\s", "", base64.encodestring(auth))
             request.headers['Authorization'] = 'Basic %s' % auth
@@ -314,7 +315,7 @@ class Agent(object):
             proxytype = proxytype.lower()
             if proxytype not in ('http', 'https'):
                 raise HTTPError("Unsupported proxy type %r" % (proxytype,))
-            proxyheaders = Headers()
+            proxyheaders = Headers(self.headers)
             if proxyauth:
                 proxyauth = re.sub(r"\s", "", base64.encodestring(proxyauth))
                 proxyheaders['Proxy-Authorization'] = 'Basic %s' % proxyauth
