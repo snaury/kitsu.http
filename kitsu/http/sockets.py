@@ -379,3 +379,30 @@ class Agent(object):
                     continue
             break
         return response
+
+class Connector(object):
+    def __init__(self, proxy=None, headers=(), timeout=30):
+        self.proxy = proxy
+        self.headers = Headers(headers)
+        self.timeout = timeout
+        self.create_connection = create_connection
+        self.wrap_ssl = wrap_ssl
+    
+    def connect(self, address, ssl=False, keyfile=None, certfile=None):
+        if self.proxy:
+            proxytype, proxyauth, proxynetloc, proxypath, proxyfragment = _parse_uri(self.proxy)
+            proxytype = proxytype.lower()
+            if proxytype not in ('http', 'https'):
+                raise HTTPError("Unsupported proxy type %r" % (proxytype,))
+            proxyheaders = Headers(self.headers)
+            if proxyauth:
+                proxyauth = re.sub(r"\s", "", base64.encodestring(proxyauth))
+                proxyheaders['Proxy-Authorization'] = 'Basic %s' % proxyauth
+            sock = self.create_connection(_parse_netloc(proxynetloc, proxytype == 'https' and 443 or 80), self.timeout)
+            sock = HTTPSProxyClient(sock, proxyheaders)
+            sock.connect(address)
+        else:
+            sock = self.create_connection(address, self.timeout)
+        if ssl:
+            sock = self.wrap_ssl(sock, keyfile, certfile)
+        return sock
