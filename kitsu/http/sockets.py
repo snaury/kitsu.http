@@ -311,7 +311,7 @@ class Agent(object):
         if self.keepalive is not None:
             request.headers['Connection'] = self.keepalive and 'keep-alive' or 'close'
         if self.proxy:
-            proxytype, proxyauth, proxynetloc, proxypath, proxyfragment = _parseProxy(self.proxy)
+            proxytype, proxyauth, proxynetloc, proxypath, proxyfragment = _parse_uri(self.proxy)
             proxytype = proxytype.lower()
             if proxytype not in ('http', 'https'):
                 raise HTTPError("Unsupported proxy type %r" % (proxytype,))
@@ -320,11 +320,11 @@ class Agent(object):
                 proxyauth = re.sub(r"\s", "", base64.encodestring(proxyauth))
                 proxyheaders['Proxy-Authorization'] = 'Basic %s' % proxyauth
             if 'https' in (scheme, proxytype):
-                address = ((proxyscheme, proxynetloc), (scheme, netloc))
+                address = ((proxytype, proxynetloc), (scheme, netloc))
             else:
                 request.target = url
                 request.headers.update(proxyheaders)
-                address = ((proxyscheme, proxynetloc),)
+                address = ((proxytype, proxynetloc),)
         else:
             address = ((scheme, netloc),)
         if self.__current_address != address:
