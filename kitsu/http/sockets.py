@@ -11,7 +11,7 @@ try:
 except ImportError:
     from StringIO import StringIO
 
-__all__ = ['Client', 'Agent']
+__all__ = ['Client', 'Agent', 'Connector']
 
 class Client(object):
     def __init__(self, sock, sizelimit=None, bodylimit=None, packetsize=4096):
