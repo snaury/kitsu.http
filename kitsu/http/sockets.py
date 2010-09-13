@@ -135,12 +135,12 @@ class HTTPSProxyClient(object):
         return getattr(self.__sock, name)
     
     def __setattr__(self, name, value):
-        if name in self.__slots__:
+        if name in ('_HTTPSProxyClient__sock', '_HTTPSProxyClient__headers'):
             return object.__setattr__(self, name, value)
         return setattr(self.__sock, name, value)
     
     def __delattr__(self, name):
-        if name in self.__slots__:
+        if name in ('_HTTPSProxyClient__sock', '_HTTPSProxyClient__headers'):
             return object.__delattr__(self, name, value)
         return delattr(self.__sock, name, value)
     
@@ -168,14 +168,17 @@ class HTTPSProxyClient(object):
         request.headers.update(self.__headers)
         self.__sock.sendall(request.toString())
         limit = 65536
-        parser = RequestParser()
+        parser = ResponseParser()
         while True:
             data = self.__readline(limit)
             if not data:
                 raise HTTPDataError("not enough data for response")
             limit -= len(data)
             response = parser.parse(data)
-            if response.done:
+            if response:
+                assert len(response) == 1
+                response = response[0]
+                assert parser.done
                 data = parser.clear()
                 assert not data
                 break
