@@ -125,22 +125,27 @@ class Client(object):
         return response
 
 class HTTPSProxyClient(object):
-    __slots__ = ('__sock', '__headers')
+    __slots__ = ('__sock', '__headers', '__peername')
     
     def __init__(self, sock, headers=()):
         self.__sock = sock
         self.__headers = Headers(headers)
+        self.__peername = None
     
     def __getattr__(self, name):
         return getattr(self.__sock, name)
     
     def __setattr__(self, name, value):
-        if name in ('_HTTPSProxyClient__sock', '_HTTPSProxyClient__headers'):
+        if name in ('_HTTPSProxyClient__sock',
+                    '_HTTPSProxyClient__headers',
+                    '_HTTPSProxyClient__peername'):
             return object.__setattr__(self, name, value)
         return setattr(self.__sock, name, value)
     
     def __delattr__(self, name):
-        if name in ('_HTTPSProxyClient__sock', '_HTTPSProxyClient__headers'):
+        if name in ('_HTTPSProxyClient__sock',
+                    '_HTTPSProxyClient__headers',
+                    '_HTTPSProxyClient__peername'):
             return object.__delattr__(self, name, value)
         return delattr(self.__sock, name, value)
     
@@ -159,6 +164,10 @@ class HTTPSProxyClient(object):
         return s.getvalue()
     
     def connect(self, address):
+        if self.__peername is not None:
+            import errno
+            import socket
+            raise socket.error(errno.EISCONN, 'Socket is already connected')
         host, port = address
         target = '%s:%s' % (host, port)
         request = Request(method='CONNECT', target=target)
@@ -185,10 +194,24 @@ class HTTPSProxyClient(object):
             if limit <= 0:
                 raise HTTPLimitError("CONNECT: response too big")
         if response.code != 200:
-            raise HTTPError("CONNECT failed: %d %s" % (response.code, response.phrase))
+            import errno
+            import socket
+            raise socket.error(errno.ECONNREFUSED, '%d %s' % (response.code, response.phrase))
+        self.__peername = (host, port)
     
     def connect_ex(self, *args, **kwargs):
         raise NotImplemented
+    
+    def getpeername(self):
+        # First make sure wrapped socket is connected
+        remote = self.__sock.getpeername()
+        # Emulate connected socket if it is connected
+        peername = self.__peername
+        if self.__peername is None:
+            import errno
+            import socket
+            raise socket.error(errno.ENOTCONN, 'Socket is not connected')
+        return self.__peername
 
 def gethostbyname(hostname):
     import socket
