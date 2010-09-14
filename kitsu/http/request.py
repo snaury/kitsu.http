@@ -6,8 +6,6 @@ from kitsu.http.headers import Headers
 from kitsu.http.parsers import LineParser
 
 class Request(object):
-    __slots__ = ('method', 'target', 'version', 'headers', 'body', '__parserState')
-    
     def __init__(self, method="GET", target="/", version=(1,1), headers=(), body=None):
         self.method = method
         self.target = target

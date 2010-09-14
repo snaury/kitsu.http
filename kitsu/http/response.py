@@ -5,8 +5,6 @@ from kitsu.http.headers import Headers
 from kitsu.http.parsers import LineParser
 
 class Response(object):
-    __slots__ = ('version', 'code', 'phrase', 'headers', 'body', '__parserState')
-    
     def __init__(self, version=(1,1), code=200, phrase='OK', headers=(), body=None):
         self.version = version
         self.code = code

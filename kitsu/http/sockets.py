@@ -125,8 +125,6 @@ class Client(object):
         return response
 
 class HTTPSProxyClient(object):
-    __slots__ = ('__sock', '__headers', '__peername')
-    
     def __init__(self, sock, headers=()):
         self.__sock = sock
         self.__headers = Headers(headers)
