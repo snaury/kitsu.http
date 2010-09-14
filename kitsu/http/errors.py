@@ -1,4 +1,10 @@
-__all__ = ['HTTPError', 'HTTPDNSError', 'HTTPDataError', 'HTTPLimitError', 'HTTPTimeoutError']
+__all__ = [
+    'HTTPError',
+    'HTTPDNSError',
+    'HTTPDataError',
+    'HTTPLimitError',
+    'HTTPTimeoutError',
+]
 
 class HTTPError(Exception):
     def __str__(self):

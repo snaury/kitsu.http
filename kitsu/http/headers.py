@@ -1,6 +1,8 @@
-from kitsu.http.errors import *
+__all__ = [
+    'Headers',
+]
 
-__all__ = ['Headers']
+from kitsu.http.errors import *
 
 _canonicalHeaderParts = { 'www' : 'WWW' }
 def _canonicalHeaderName(name):

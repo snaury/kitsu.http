@@ -1,4 +1,7 @@
-__all__ = ['Response', 'ResponseParser']
+__all__ = [
+    'Response',
+    'ResponseParser',
+]
 
 from kitsu.http.errors import *
 from kitsu.http.headers import Headers

@@ -7,7 +7,7 @@ import Queue
 from kitsu.http.errors import *
 from kitsu.http.request import *
 from kitsu.http.response import *
-from kitsu.http.sockets import *
+from kitsu.http.sockets import Client
 import unittest
 
 class Server(threading.Thread):

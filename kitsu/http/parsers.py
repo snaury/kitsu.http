@@ -1,4 +1,7 @@
-__all__ = ['Parser', 'LineParser']
+__all__ = [
+    'Parser',
+    'LineParser',
+]
 
 class Parser(object):
     """Abstract data parser"""
