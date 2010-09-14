@@ -16,7 +16,7 @@ try:
 except ImportError:
     from StringIO import StringIO
 
-class Client(object):
+class HTTPClient(object):
     def __init__(self, sock, sizelimit=None, bodylimit=None, packetsize=4096):
         self.sock = sock
         self.data = ''
@@ -127,7 +127,7 @@ class Client(object):
         response.body = response.body.getvalue()
         return response
 
-class HTTPSProxyClient(object):
+class HTTPProxyClient(object):
     def __init__(self, sock, headers=()):
         self.__sock = sock
         self.__headers = Headers(headers)
@@ -137,16 +137,16 @@ class HTTPSProxyClient(object):
         return getattr(self.__sock, name)
     
     def __setattr__(self, name, value):
-        if name in ('_HTTPSProxyClient__sock',
-                    '_HTTPSProxyClient__headers',
-                    '_HTTPSProxyClient__peername'):
+        if name in ('_HTTPProxyClient__sock',
+                    '_HTTPProxyClient__headers',
+                    '_HTTPProxyClient__peername'):
             return object.__setattr__(self, name, value)
         return setattr(self.__sock, name, value)
     
     def __delattr__(self, name):
-        if name in ('_HTTPSProxyClient__sock',
-                    '_HTTPSProxyClient__headers',
-                    '_HTTPSProxyClient__peername'):
+        if name in ('_HTTPProxyClient__sock',
+                    '_HTTPProxyClient__headers',
+                    '_HTTPProxyClient__peername'):
             return object.__delattr__(self, name, value)
         return delattr(self.__sock, name, value)
     
@@ -361,11 +361,11 @@ class Agent(object):
             sock = self.create_connection(_parse_netloc(tnetloc, tscheme == 'https' and 443 or 80), self.timeout)
             if self.proxy and 'https' in (scheme, proxytype):
                 tscheme, tnetloc = address[1]
-                sock = HTTPSProxyClient(sock, proxyheaders)
+                sock = HTTPProxyClient(sock, proxyheaders)
                 sock.connect(_parse_netloc(tnetloc, tscheme == 'https' and 443 or 80))
             if scheme == 'https':
                 sock = self.wrap_ssl(sock, keyfile, certfile)
-            client = self.__current_client = Client(sock, sizelimit=self.sizelimit, bodylimit=self.bodylimit)
+            client = self.__current_client = HTTPClient(sock, sizelimit=self.sizelimit, bodylimit=self.bodylimit)
             self.__current_address = address
         else:
             client = self.__current_client
@@ -423,7 +423,7 @@ class Connector(object):
                 proxyauth = re.sub(r"\s", "", base64.encodestring(proxyauth))
                 proxyheaders['Proxy-Authorization'] = 'Basic %s' % proxyauth
             sock = self.create_connection(_parse_netloc(proxynetloc, proxytype == 'https' and 443 or 80), self.timeout)
-            sock = HTTPSProxyClient(sock, proxyheaders)
+            sock = HTTPProxyClient(sock, proxyheaders)
             sock.connect(address)
         else:
             sock = self.create_connection(address, self.timeout)

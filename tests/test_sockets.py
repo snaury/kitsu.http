@@ -7,7 +7,7 @@ import Queue
 from kitsu.http.errors import *
 from kitsu.http.request import *
 from kitsu.http.response import *
-from kitsu.http.sockets import Client
+from kitsu.http.sockets import HTTPClient
 import unittest
 
 class Server(threading.Thread):
@@ -84,7 +84,7 @@ def make_response(body, chunked=False, length=None):
     else:
         return Response(body=body, headers={'Content-Length': str(length or len(body))})
 
-class ClientTests(unittest.TestCase):
+class HTTPClientTests(unittest.TestCase):
     def setUp(self):
         self.server = Server()
         self.server.start()
@@ -101,7 +101,7 @@ class ClientTests(unittest.TestCase):
         sock.connect((self.server.host, self.server.port))
         start = time.time()
         try:
-            return Client(sock, sizelimit=sizelimit, bodylimit=bodylimit).makeRequest(request or Request())
+            return HTTPClient(sock, sizelimit=sizelimit, bodylimit=bodylimit).makeRequest(request or Request())
         finally:
             self.assertTrue(time.time() - start < timeout, "request took too long")
     
