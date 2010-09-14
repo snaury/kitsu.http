@@ -43,7 +43,7 @@ class Header(object):
         return "<Header(name=%r, value=%r, prev=%s, next=%s, prev_value=%s, next_value=%s) at 0x%x>" % (self.name, self.value, objref(self.prev), objref(self.next), objref(self.prev_value), objref(self.next_value), id(self))
 
 class Headers(object):
-    __slots__ = ('__head', '__tail', '__values', 'encoding', '__partialHeader')
+    __slots__ = ('__head', '__tail', '__values', 'encoding', '__partialHeader', '__weakref__')
     
     def __init__(self, data=(), encoding='utf-8'):
         self.__head = None
