@@ -5,8 +5,10 @@ import select
 import threading
 import Queue
 from kitsu.http.errors import *
+from kitsu.http.headers import *
 from kitsu.http.request import *
 from kitsu.http.response import *
+from kitsu.http.sockets import *
 from kitsu.http.sockets import HTTPClient
 import unittest
 
@@ -16,6 +18,7 @@ class Server(threading.Thread):
         self.sock = socket.socket()
         self.sock.bind((host, port))
         self.sock.listen(1)
+        self.sock.settimeout(5)
         self.host, self.port = self.sock.getsockname()
         self.responses = Queue.Queue()
         self.deadsockets = []
@@ -31,6 +34,7 @@ class Server(threading.Thread):
                     break
                 response, autoclose = item
                 sock, addr = self.sock.accept()
+                sock.settimeout(5)
                 try:
                     parser = RequestParser()
                     while True:
@@ -78,11 +82,13 @@ CHUNKED_HEADER = ("""\
 
 """ % dict(size=len(NORMAL_BODY), chunk=NORMAL_BODY)).replace("\n", "\r\n")
 
-def make_response(body, chunked=False, length=None):
+def make_response(body, chunked=False, length=None, code=200, headers=()):
+    headers = Headers(headers)
     if chunked:
-        return Response(body=body, headers={'Transfer-Encoding': 'chunked'})
+        headers['Transfer-Encoding'] = 'chunked'
     else:
-        return Response(body=body, headers={'Content-Length': str(length or len(body))})
+        headers['Content-Length'] = str(length or len(body))
+    return Response(code=code, body=body, headers=headers)
 
 class HTTPClientTests(unittest.TestCase):
     def setUp(self):
@@ -169,3 +175,45 @@ class HTTPClientTests(unittest.TestCase):
         response = self.request(res, bodylimit=len(NORMAL_BODY))
         self.assertRaises(HTTPLimitError, self.request,
             res, bodylimit=len(NORMAL_BODY) - 1)
+
+class AgentTests(unittest.TestCase):
+    def setUp(self):
+        self.server = Server()
+        self.server.start()
+    
+    def tearDown(self):
+        self.server.stop()
+        self.server.join()
+        self.server = None
+    
+    def _make_url(self, path="/"):
+        return "http://%s:%s%s" % (self.server.host, self.server.port, path)
+    
+    def request(self, responses, url=None, autoclose=False, timeout=5, sizelimit=None, bodylimit=None, version=(1,1)):
+        if not isinstance(responses, (tuple,list)):
+            responses = [responses]
+        for response in responses:
+            self.server.enqueue(response, autoclose=autoclose)
+        if not url:
+            url = self._make_url()
+        start = time.time()
+        try:
+            return Agent(timeout=timeout*2, keepalive=False, sizelimit=sizelimit, bodylimit=bodylimit).makeRequest(url, version=version)
+        finally:
+            self.assertTrue(time.time() - start < timeout, "request took too long")
+    
+    def test_normal(self):
+        response = self.request(make_response(NORMAL_BODY))
+        self.assertEqual(response.body, NORMAL_BODY)
+        self.assertEqual(response.url, self._make_url())
+        self.assertEqual(response.urlchain, [self._make_url()])
+    
+    def test_redirect(self):
+        response = self.request([
+            make_response("", code=302, headers={'Location': '/test'}),
+            make_response(NORMAL_BODY),
+        ])
+        self.assertEqual(response.code, 200)
+        self.assertEqual(response.body, NORMAL_BODY)
+        self.assertEqual(response.url, self._make_url('/test'))
+        self.assertEqual(response.urlchain, [self._make_url(), self._make_url('/test')])
