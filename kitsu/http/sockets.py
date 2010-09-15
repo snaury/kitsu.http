@@ -214,20 +214,6 @@ class HTTPProxyClient(object):
             raise socket.error(errno.ENOTCONN, 'Socket is not connected')
         return self.__peername
 
-def gethostbyname(hostname):
-    import socket
-    try:
-        return socket.gethostbyname(hostname)
-    except socket.error, e:
-        raise HTTPDNSError("%r: %s" % (hostname, e))
-
-def gethostbyaddr(ipaddr):
-    import socket
-    try:
-        return socket.gethostbyaddr(ipaddr)
-    except socket.error, e:
-        raise HTTPDNSError("%r: %s" % (hostname, e))
-
 def create_connection(address, timeout=None):
     import socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
@@ -310,8 +296,6 @@ class Agent(object):
         self.redirectlimit = redirectlimit
         self.__current_address = None
         self.__current_client = None
-        self.gethostbyname = gethostbyname
-        self.gethostbyaddr = gethostbyaddr
         self.create_connection = create_connection
         self.wrap_ssl = wrap_ssl
     
