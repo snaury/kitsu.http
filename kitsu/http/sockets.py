@@ -375,9 +375,11 @@ class Agent(object):
     
     def makeRequest(self, url, **kwargs):
         url = url.strip()
+        urlchain = []
         redirectlimit = self.redirectlimit
         while True:
             response = self.__makeRequest(url, **kwargs)
+            urlchain.append(url)
             if response.code in (301, 302, 303, 307) and redirectlimit > 0:
                 redirectlimit -= 1
                 location = response.headers.getlist('Location')
@@ -387,6 +389,8 @@ class Agent(object):
                     url = urlparse.urljoin(url, location)
                     continue
             break
+        response.urlchain = urlchain
+        response.url = url
         return response
 
 class Connector(object):
