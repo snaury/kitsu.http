@@ -214,12 +214,13 @@ class HTTPProxyClient(object):
             raise socket.error(errno.ENOTCONN, 'Socket is not connected')
         return self.__peername
 
-def create_connection(address, timeout=None):
+def create_socket(address=None, timeout=None):
     import socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
     if timeout is not None:
         sock.settimeout(timeout)
-    sock.connect(address)
+    if address is not None:
+        sock.connect(address)
     return sock
 
 def wrap_ssl(sock, keyfile=None, certfile=None, **kwargs):
@@ -296,7 +297,7 @@ class Agent(object):
         self.redirectlimit = redirectlimit
         self.__current_address = None
         self.__current_client = None
-        self.create_connection = create_connection
+        self.create_socket = create_socket
         self.wrap_ssl = wrap_ssl
     
     def close(self):
@@ -342,7 +343,7 @@ class Agent(object):
             self.close()
         if self.__current_client is None:
             tscheme, tnetloc = address[0]
-            sock = self.create_connection(_parse_netloc(tnetloc, tscheme == 'https' and 443 or 80), self.timeout)
+            sock = self.create_socket(_parse_netloc(tnetloc, tscheme == 'https' and 443 or 80), self.timeout)
             if self.proxy and 'https' in (scheme, proxytype):
                 tscheme, tnetloc = address[1]
                 sock = HTTPProxyClient(sock, proxyheaders)
@@ -393,7 +394,7 @@ class Connector(object):
         self.proxy = proxy
         self.headers = Headers(headers)
         self.timeout = timeout
-        self.create_connection = create_connection
+        self.create_socket = create_socket
         self.wrap_ssl = wrap_ssl
     
     def connect(self, address, ssl=False, keyfile=None, certfile=None):
@@ -406,11 +407,11 @@ class Connector(object):
             if proxyauth:
                 proxyauth = re.sub(r"\s", "", base64.encodestring(proxyauth))
                 proxyheaders['Proxy-Authorization'] = 'Basic %s' % proxyauth
-            sock = self.create_connection(_parse_netloc(proxynetloc, proxytype == 'https' and 443 or 80), self.timeout)
+            sock = self.create_socket(_parse_netloc(proxynetloc, proxytype == 'https' and 443 or 80), self.timeout)
             sock = HTTPProxyClient(sock, proxyheaders)
             sock.connect(address)
         else:
-            sock = self.create_connection(address, self.timeout)
+            sock = self.create_socket(address, self.timeout)
         if ssl:
             sock = self.wrap_ssl(sock, keyfile, certfile)
         return sock
