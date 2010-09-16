@@ -14,8 +14,8 @@ setup(
     url="http://git.kitsu.ru/mine/kitsu-http.git",
     license="MIT License",
     platforms=['any'],
+    namespace_packages=['kitsu'],
     packages=['kitsu', 'kitsu.http'],
-    zip_safe=True,
     test_suite='tests.test_suite',
     classifiers=[
         'Intended Audience :: Developers',
