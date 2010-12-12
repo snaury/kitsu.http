@@ -60,7 +60,8 @@ class Headers(object):
         self.__remove()
     
     def __make_key(self, name):
-        assert isinstance(name, basestring)
+        if not isinstance(name, basestring):
+            raise KeyError(name)
         name = name.lower()
         if isinstance(name, unicode):
             name = name.encode(self.encoding)
@@ -119,6 +120,8 @@ class Headers(object):
     
     def __append(self, name, value):
         key = self.__make_key(name)
+        if not isinstance(value, basestring):
+            value = str(value)
         item = self.__values.get(key)
         if item is None:
             item = self.__values[key] = [None, None]
@@ -145,6 +148,8 @@ class Headers(object):
             return
         elif isinstance(value, basestring):
             self.__append(name, value)
+        elif not isinstance(value, (list, tuple)):
+            self.__append(name, str(value))
         else:
             for value in value:
                 self.__append(name, value)
@@ -228,6 +233,8 @@ class Headers(object):
             return
         elif isinstance(value, basestring):
             self.__append(name, value)
+        elif not isinstance(value, (list, tuple)):
+            self.__append(name, str(value))
         else:
             for value in value:
                 self.__append(name, value)
@@ -249,6 +256,8 @@ class Headers(object):
                 continue
             elif isinstance(value, basestring):
                 self.__append(name, value)
+            elif not isinstance(value, (list, tuple)):
+                self.__append(name, str(value))
             else:
                 for value in value:
                     self.__append(name, value)
