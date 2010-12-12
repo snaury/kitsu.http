@@ -4,17 +4,23 @@ __all__ = [
 ]
 
 import re
+import errno
 import base64
+import socket
 import urlparse
+try:
+    import ssl
+except ImportError:
+    ssl = None
+try:
+    from cStringIO import StringIO
+except ImportError:
+    from StringIO import StringIO
 from kitsu.http.errors import *
 from kitsu.http.headers import *
 from kitsu.http.request import *
 from kitsu.http.response import *
 from kitsu.http.decoders import *
-try:
-    from cStringIO import StringIO
-except ImportError:
-    from StringIO import StringIO
 
 class HTTPClient(object):
     def __init__(self, sock, sizelimit=None, bodylimit=None, packetsize=4096):
@@ -166,8 +172,6 @@ class HTTPProxyClient(object):
     
     def connect(self, address):
         if self.__peername is not None:
-            import errno
-            import socket
             raise socket.error(errno.EISCONN, 'Socket is already connected')
         host, port = address
         target = '%s:%s' % (host, port)
@@ -195,8 +199,6 @@ class HTTPProxyClient(object):
             if limit <= 0:
                 raise HTTPLimitError("CONNECT: response too big")
         if response.code != 200:
-            import errno
-            import socket
             raise socket.error(errno.ECONNREFUSED, '%d %s' % (response.code, response.phrase))
         self.__peername = (host, port)
     
@@ -209,13 +211,10 @@ class HTTPProxyClient(object):
         # Emulate connected socket if it is connected
         peername = self.__peername
         if self.__peername is None:
-            import errno
-            import socket
             raise socket.error(errno.ENOTCONN, 'Socket is not connected')
         return self.__peername
 
 def create_socket(address=None, timeout=None):
-    import socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
     if timeout is not None:
         sock.settimeout(timeout)
@@ -224,13 +223,10 @@ def create_socket(address=None, timeout=None):
     return sock
 
 def wrap_ssl(sock, keyfile=None, certfile=None, **kwargs):
-    try:
-        from ssl import wrap_socket
-    except ImportError:
-        import socket
+    if ssl is None:
         return socket.ssl(sock, keyfile, certfile)
     # Work around http://bugs.python.org/issue5103 on Python 2.6
-    sslsock = wrap_socket(sock, keyfile, certfile, do_handshake_on_connect=False, **kwargs)
+    sslsock = ssl.wrap_socket(sock, keyfile, certfile, do_handshake_on_connect=False, **kwargs)
     # Work around bug in gevent.ssl, timeout in SSLObject is not inherited
     sslsock.settimeout(sock.gettimeout())
     try:
