@@ -139,6 +139,9 @@ class HTTPProxyClient(object):
         self.__headers = Headers(headers)
         self.__peername = None
     
+    def _wrap_ssl(self, wrap_ssl, *args, **kwargs):
+        self.__sock = wrap_ssl(self.__sock, *args, **kwargs)
+    
     def __getattr__(self, name):
         return getattr(self.__sock, name)
     
@@ -345,7 +348,10 @@ class Agent(object):
                 sock = HTTPProxyClient(sock, proxyheaders)
                 sock.connect(_parse_netloc(tnetloc, tscheme == 'https' and 443 or 80))
             if scheme == 'https':
-                sock = self.wrap_ssl(sock, keyfile, certfile)
+                if isinstance(sock, HTTPProxyClient):
+                    sock._wrap_ssl(self.wrap_ssl, keyfile, certfile)
+                else:
+                    sock = self.wrap_ssl(sock, keyfile, certfile)
             client = self.__current_client = HTTPClient(sock, sizelimit=self.sizelimit, bodylimit=self.bodylimit)
             self.__current_address = address
         else:
@@ -413,5 +419,8 @@ class Connector(object):
         else:
             sock = self.create_socket(address, self.timeout)
         if ssl:
-            sock = self.wrap_ssl(sock, keyfile, certfile)
+            if isinstance(sock, HTTPProxyClient):
+                sock._wrap_ssl(self.wrap_ssl, keyfile, certfile)
+            else:
+                sock = self.wrap_ssl(sock, keyfile, certfile)
         return sock
