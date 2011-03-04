@@ -337,4 +337,3 @@ class AgentTests(unittest.TestCase):
         self._use_proxy()
         self.server.secure = True
         self.test_redirect()
-
