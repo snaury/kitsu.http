@@ -388,7 +388,10 @@ class Agent(object):
                 if location:
                     location = location[0].strip()
                 if location:
+                    kwargs['referer'] = url
                     url = urlparse.urljoin(url, location)
+                    kwargs['method'] = 'GET'
+                    kwargs['body'] = None
                     continue
             break
         response.urlchain = urlchain
