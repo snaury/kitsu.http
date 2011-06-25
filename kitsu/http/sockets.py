@@ -286,6 +286,18 @@ def _make_uri(scheme, auth, netloc, path='', fragment=''):
     return uri
 
 class Agent(object):
+    no_redirect_headers = (
+        'Transfer-Encoding',
+        'Content-Length',
+        'Content-Range',
+        'Content-Type',
+        'Authorization',
+        'Referer',
+        'Expect',
+        'Range',
+        'Host',
+    )
+
     def __init__(self, proxy=None, headers=(), timeout=30, keepalive=None, sizelimit=None, bodylimit=None, redirectlimit=20):
         self.proxy = proxy
         self.headers = Headers(headers)
@@ -312,14 +324,14 @@ class Agent(object):
             raise HTTPError("Unsupported scheme %r: %s" % (scheme, url))
         request = Request(method=method, target=path or '/', version=version, headers=self.headers, body=body)
         request.headers.update(headers)
-        if auth:
+        if auth and 'Authorization' not in request.headers:
             auth = re.sub(r"\s", "", base64.encodestring(auth))
             request.headers['Authorization'] = 'Basic %s' % auth
-        if netloc:
+        if netloc and 'Host' not in request.headers:
             request.headers['Host'] = netloc
-        if referer:
+        if referer and 'Referer' not in request.headers:
             request.headers['Referer'] = referer
-        if self.keepalive is not None:
+        if self.keepalive is not None and 'Connection' not in request.headers:
             request.headers['Connection'] = self.keepalive and 'keep-alive' or 'close'
         if self.proxy:
             proxytype, proxyauth, proxynetloc, proxypath, proxyfragment = _parse_uri(self.proxy)
@@ -378,9 +390,10 @@ class Agent(object):
     def makeRequest(self, url, **kwargs):
         url = url.strip()
         urlchain = []
-        redirectlimit = self.redirectlimit
+        headers = Headers(kwargs.pop('headers', ()))
+        redirectlimit = kwargs.pop('redirectlimit', self.redirectlimit)
         while True:
-            response = self.__makeRequest(url, **kwargs)
+            response = self.__makeRequest(url, headers=headers, **kwargs)
             urlchain.append(url)
             if response.code in (301, 302, 303, 307) and redirectlimit > 0:
                 redirectlimit -= 1
@@ -388,6 +401,11 @@ class Agent(object):
                 if location:
                     location = location[0].strip()
                 if location:
+                    for name in self.no_redirect_headers:
+                        headers.poplist(name, None)
+                    for name in headers.keys():
+                        if name.startswith('If-'):
+                            headers.poplist(name, None)
                     kwargs['referer'] = url
                     url = urlparse.urljoin(url, location)
                     kwargs['method'] = 'GET'
