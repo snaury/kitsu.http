@@ -160,7 +160,8 @@ class Headers(object):
         self.__remove(name)
     
     def __iter__(self):
-        return self.__iter()
+        for header in self.__iter():
+            yield header.name
     
     def __contains__(self, name):
         return self.__make_key(name) in self.__values
