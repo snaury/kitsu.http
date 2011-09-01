@@ -149,9 +149,16 @@ class CompoundDecoder(Parser):
     @classmethod
     def from_response(cls, method, response):
         # process Content-Length
-        contentLength = response.headers.get('Content-Length')
+        contentLength = response.headers.getlist('Content-Length')
         if contentLength:
-            contentLength = int(contentLength)
+            contentLength = contentLength[-1]
+            if contentLength:
+                try:
+                    contentLength = int(contentLength)
+                except ValueError:
+                    raise HTTPDataError("invalid Content-Length header")
+            else:
+                contentLength = None
         else:
             contentLength = None
         if method in cls.requestMethodsWithoutBody:

@@ -163,7 +163,7 @@ def make_response(body, chunked=False, length=None, code=200, headers=()):
     if chunked:
         headers['Transfer-Encoding'] = 'chunked'
     else:
-        headers['Content-Length'] = str(length or len(body))
+        headers['Content-Length'] = ['ignore me', str(length or len(body))]
     return Response(code=code, body=body, headers=headers)
 
 class HTTPClientTests(unittest.TestCase):
