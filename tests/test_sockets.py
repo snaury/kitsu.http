@@ -10,8 +10,8 @@ from kitsu.http.errors import *
 from kitsu.http.headers import *
 from kitsu.http.request import *
 from kitsu.http.response import *
-from kitsu.http.sockets import *
-from kitsu.http.sockets import HTTPClient
+from kitsu.http.client import *
+from kitsu.http.client import HTTPClient
 import unittest
 
 server_keyfile = os.path.join(os.path.dirname(__file__), 'certs', 'server.key')

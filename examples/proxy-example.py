@@ -1,5 +1,5 @@
 import gevent.monkey; gevent.monkey.patch_all()
-from kitsu.http.sockets import Agent, Connector
+from kitsu.http.client import Agent, Connector
 from kitsu.http.request import Request, RequestParser
 from kitsu.http.response import Response
 import socket
