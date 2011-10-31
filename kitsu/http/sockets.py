@@ -134,30 +134,33 @@ class HTTPClient(object):
         return response
 
 class HTTPProxyClient(object):
+    __slots__ = (
+        '_HTTPProxyClient__sock',
+        '_HTTPProxyClient__headers',
+        '_HTTPProxyClient__peername',
+    )
+    
     def __init__(self, sock, headers=()):
         self.__sock = sock
         self.__headers = Headers(headers)
         self.__peername = None
     
-    def _wrap_ssl(self, wrap_ssl, *args, **kwargs):
-        self.__sock = wrap_ssl(self.__sock, *args, **kwargs)
+    @property
+    def __class__(self):
+        return self.__sock.__class__
     
     def __getattr__(self, name):
         return getattr(self.__sock, name)
     
     def __setattr__(self, name, value):
-        if name in ('_HTTPProxyClient__sock',
-                    '_HTTPProxyClient__headers',
-                    '_HTTPProxyClient__peername'):
+        if name in self.__slots__:
             return object.__setattr__(self, name, value)
         return setattr(self.__sock, name, value)
     
     def __delattr__(self, name):
-        if name in ('_HTTPProxyClient__sock',
-                    '_HTTPProxyClient__headers',
-                    '_HTTPProxyClient__peername'):
-            return object.__delattr__(self, name, value)
-        return delattr(self.__sock, name, value)
+        if name in self.__slots__:
+            return object.__delattr__(self, name)
+        return delattr(self.__sock, name)
     
     def __readline(self, limit=65536):
         """Read a line being careful not to read more than needed"""
@@ -360,10 +363,7 @@ class Agent(object):
                 sock = HTTPProxyClient(sock, proxyheaders)
                 sock.connect(_parse_netloc(tnetloc, tscheme == 'https' and 443 or 80))
             if scheme == 'https':
-                if isinstance(sock, HTTPProxyClient):
-                    sock._wrap_ssl(self.wrap_ssl, keyfile, certfile)
-                else:
-                    sock = self.wrap_ssl(sock, keyfile, certfile)
+                sock = self.wrap_ssl(sock, keyfile, certfile)
             client = self.__current_client = HTTPClient(sock, sizelimit=self.sizelimit, bodylimit=self.bodylimit)
             self.__current_address = address
         else:
@@ -440,8 +440,5 @@ class Connector(object):
         else:
             sock = self.create_socket(address, self.timeout)
         if ssl:
-            if isinstance(sock, HTTPProxyClient):
-                sock._wrap_ssl(self.wrap_ssl, keyfile, certfile)
-            else:
-                sock = self.wrap_ssl(sock, keyfile, certfile)
+            sock = self.wrap_ssl(sock, keyfile, certfile)
         return sock
