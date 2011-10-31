@@ -4,6 +4,7 @@ __all__ = [
 ]
 
 import re
+import sys
 import errno
 import base64
 import socket
@@ -11,6 +12,11 @@ import urlparse
 try:
     import ssl
 except ImportError:
+    # if import _ssl in sll fails, then subsequent
+    # import ssl statements would succeed
+    # workaround that, so other modules have
+    # a chance to detect ssl support
+    sys.modules.pop('ssl', None)
     ssl = None
 try:
     from cStringIO import StringIO
