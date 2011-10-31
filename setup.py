@@ -6,7 +6,7 @@ def read(name):
 
 setup(
     name="kitsu.http",
-    version="0.0.5",
+    version="0.0.6",
     description="Low-level HTTP library for Python",
     long_description=read('README'),
     author="Alexey Borzenkov",
