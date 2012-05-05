@@ -11,7 +11,7 @@ setup(
     long_description=read('README'),
     author="Alexey Borzenkov",
     author_email="snaury@gmail.com",
-    url="http://git.kitsu.ru/mine/kitsu-http.git",
+    url="https://github.com/snaury/kitsu.http",
     license="MIT License",
     platforms=['any'],
     namespace_packages=['kitsu', 'kitsu.http'],
