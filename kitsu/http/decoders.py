@@ -147,9 +147,12 @@ class CompoundDecoder(Parser):
     responseCodesWithoutBody = frozenset((204, 304))
     
     @classmethod
-    def from_response(cls, method, response):
+    def from_response(cls, request, response):
         # process Content-Length
-        contentLength = response.headers.getlist('Content-Length')
+        if getattr(request, 'ignore_content_length', False):
+            contentLength = None
+        else:
+            contentLength = response.headers.getlist('Content-Length')
         if contentLength:
             contentLength = contentLength[-1]
             if contentLength:
@@ -161,7 +164,7 @@ class CompoundDecoder(Parser):
                 contentLength = None
         else:
             contentLength = None
-        if method in cls.requestMethodsWithoutBody:
+        if request.method in cls.requestMethodsWithoutBody:
             contentLength = 0
         if contentLength is None and response.code in cls.responseCodesWithoutBody:
             contentLength = 0

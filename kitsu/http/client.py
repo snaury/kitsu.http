@@ -101,7 +101,7 @@ class HTTPClient(object):
             if sizelimit is not None and sizelimit <= 0:
                 raise HTTPLimitError()
             self.data = self.__recv()
-        decoder = CompoundDecoder.from_response(request.method, response)
+        decoder = CompoundDecoder.from_response(request, response)
         if not decoder:
             # response has no body
             response.body = ''
@@ -306,7 +306,7 @@ class Agent(object):
         'Range',
         'Host',
     )
-
+    
     def __init__(self, proxy=None, headers=(), timeout=30, keepalive=None, sizelimit=None, bodylimit=None, redirectlimit=20):
         self.proxy = proxy
         self.headers = Headers(headers)
@@ -326,7 +326,7 @@ class Agent(object):
             self.__current_client.close()
             self.__current_client = None
     
-    def __makeRequest(self, url, method='GET', version=(1, 1), headers=(), body=None, referer=None, keyfile=None, certfile=None):
+    def __makeRequest(self, url, method='GET', version=(1, 1), headers=(), body=None, referer=None, keyfile=None, certfile=None, ignore_content_length=False):
         scheme, auth, netloc, path, fragment = _parse_uri(url)
         scheme = scheme.lower()
         if scheme not in ('http', 'https'):
@@ -340,7 +340,11 @@ class Agent(object):
             request.headers['Host'] = netloc
         if referer and 'Referer' not in request.headers:
             request.headers['Referer'] = referer
-        if self.keepalive is not None and 'Connection' not in request.headers:
+        if ignore_content_length:
+            if 'Connection' not in request.headers:
+                request.headers['Connection'] = 'close'
+            request.ignore_content_length = True
+        elif self.keepalive is not None and 'Connection' not in request.headers:
             request.headers['Connection'] = self.keepalive and 'keep-alive' or 'close'
         if self.proxy:
             proxytype, proxyauth, proxynetloc, proxypath, proxyfragment = _parse_uri(self.proxy)
@@ -389,6 +393,8 @@ class Agent(object):
                 keepalive = True
             if 'close' in connection:
                 keepalive = False
+        if ignore_content_length:
+            keepalive = False
         if not keepalive or (not self.keepalive and self.keepalive is not None):
             self.close()
         return response
